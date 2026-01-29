@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.0 (Demo)  
+**Version:** 1.1 (Demo)  
 **Last Updated:** 2026-01-29
 
 ---
@@ -10,10 +10,10 @@
 
 | Objective | Description |
 |-----------|-------------|
-| **Core Integration** | Spot 미션 → Orbit → Ignition Perspective 연동 |
-| **Conditional Notifications** | 미션/태그/상태에 따라 **다른 수신자**에게 메일 자동 전송 |
-| **Scalable Naming** | 향후 사이트/프로젝트 증가에도 **규칙/네이밍 일관성** 유지 |
-| **Process Clarity** | **SIPOC**로 전체 흐름 정리 |
+| **Core Integration** | Integrate Spot mission → Orbit → Ignition Perspective |
+| **Conditional Notifications** | Automatically send emails to different recipients based on mission, tag, or status |
+| **Scalable Naming** | Maintain consistent naming and rules even as sites/projects scale up |
+| **Process Clarity** | Summarize the overall flow using a **SIPOC** diagram |
 
 ### 1.1 Demo Scope (MVP)
 
@@ -152,7 +152,7 @@ flowchart TB
 
 | Layer | Convention | Example |
 |-------|------------|---------|
-| **SQL Tables** | PascalCase, Plural | `Robotics.Runs`, `Robotics.Robots` |
+| **SQL Tables** | PascalCase, Plural | `RoboticsRuns`, `RoboticsRobots` |
 | **SQL Columns** | PascalCase | `MissionStatusCode`, `StartedAtUtc` |
 | **Tag Paths** | ISA-95 Hierarchy | `Enterprise/Site/Area/Line/Device/Tag` |
 | **Tag Names** | PascalCase | `BatteryLevel`, `IsConnected`, `MissionStatusCode` |
@@ -275,31 +275,31 @@ CREATE SCHEMA Robotics;
 GO
 
 -- Lookup: Mission Status Codes
-CREATE TABLE Robotics.MissionStatusCodes (
+CREATE TABLE RoboticsMissionStatusCodes (
     MissionStatusCode NVARCHAR(10) NOT NULL PRIMARY KEY,
     Description NVARCHAR(100) NOT NULL,
     DisplayOrder INT NOT NULL DEFAULT 0
 );
 
-INSERT INTO Robotics.MissionStatusCodes VALUES
+INSERT INTO RoboticsMissionStatusCodes VALUES
 ('PEND', 'Pending', 1),
 ('RUN', 'Running', 2),
 ('COMP', 'Completed', 3),
 ('FAIL', 'Failed', 4);
 
 -- Lookup: Trigger Types
-CREATE TABLE Robotics.TriggerTypeCodes (
+CREATE TABLE RoboticsTriggerTypeCodes (
     TriggerTypeCode NVARCHAR(20) NOT NULL PRIMARY KEY,
     Description NVARCHAR(100) NOT NULL
 );
 
-INSERT INTO Robotics.TriggerTypeCodes VALUES
+INSERT INTO RoboticsTriggerTypeCodes VALUES
 ('RUN_START', 'Run Started'),
 ('RUN_COMP', 'Run Completed'),
 ('RUN_FAIL', 'Run Failed');
 
 -- Core: Sites
-CREATE TABLE Robotics.Sites (
+CREATE TABLE RoboticsSites (
     SiteId INT IDENTITY(1,1) PRIMARY KEY,
     SiteCode NVARCHAR(20) NOT NULL UNIQUE,
     Name NVARCHAR(200) NOT NULL,
@@ -310,9 +310,9 @@ CREATE TABLE Robotics.Sites (
 );
 
 -- Core: Robots
-CREATE TABLE Robotics.Robots (
+CREATE TABLE RoboticsRobots (
     RobotId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NOT NULL REFERENCES Robotics.Sites(SiteId),
+    SiteId INT NOT NULL REFERENCES RoboticsSites(SiteId),
     Hostname NVARCHAR(100) NOT NULL,
     Nickname NVARCHAR(100) NULL,
     TagBasePath NVARCHAR(500) NULL,
@@ -323,13 +323,13 @@ CREATE TABLE Robotics.Robots (
 );
 
 -- Core: Runs (Mission Executions)
-CREATE TABLE Robotics.Runs (
+CREATE TABLE RoboticsRuns (
     RunId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NOT NULL REFERENCES Robotics.Sites(SiteId),
-    RobotId INT NULL REFERENCES Robotics.Robots(RobotId),
+    SiteId INT NOT NULL REFERENCES RoboticsSites(SiteId),
+    RobotId INT NULL REFERENCES RoboticsRobots(RobotId),
     OrbitRunUuid NVARCHAR(100) NOT NULL UNIQUE,
     MissionName NVARCHAR(200) NULL,
-    MissionStatusCode NVARCHAR(10) NULL REFERENCES Robotics.MissionStatusCodes(MissionStatusCode),
+    MissionStatusCode NVARCHAR(10) NULL REFERENCES RoboticsMissionStatusCodes(MissionStatusCode),
     StartedAtUtc DATETIME2(3) NULL,
     CompletedAtUtc DATETIME2(3) NULL,
     DurationMinutes AS DATEDIFF(MINUTE, StartedAtUtc, CompletedAtUtc),
@@ -338,11 +338,11 @@ CREATE TABLE Robotics.Runs (
 );
 
 -- Notification: Rules
-CREATE TABLE Robotics.NotificationRules (
+CREATE TABLE RoboticsNotificationRules (
     NotificationRuleId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NULL REFERENCES Robotics.Sites(SiteId),
+    SiteId INT NULL REFERENCES RoboticsSites(SiteId),
     RuleName NVARCHAR(200) NOT NULL,
-    TriggerTypeCode NVARCHAR(20) NOT NULL REFERENCES Robotics.TriggerTypeCodes(TriggerTypeCode),
+    TriggerTypeCode NVARCHAR(20) NOT NULL REFERENCES RoboticsTriggerTypeCodes(TriggerTypeCode),
     MissionNamePattern NVARCHAR(200) NULL,  -- NULL = all missions
     StatusCodeFilter NVARCHAR(100) NULL,    -- NULL = all statuses
     EmailSubjectTemplate NVARCHAR(500) NULL,
@@ -353,9 +353,9 @@ CREATE TABLE Robotics.NotificationRules (
 );
 
 -- Notification: Recipients
-CREATE TABLE Robotics.NotificationRecipients (
+CREATE TABLE RoboticsNotificationRecipients (
     NotificationRecipientId INT IDENTITY(1,1) PRIMARY KEY,
-    NotificationRuleId INT NOT NULL REFERENCES Robotics.NotificationRules(NotificationRuleId),
+    NotificationRuleId INT NOT NULL REFERENCES RoboticsNotificationRules(NotificationRuleId),
     RecipientTypeCode NVARCHAR(10) NOT NULL DEFAULT 'to',  -- to, cc, bcc
     Email NVARCHAR(200) NOT NULL,
     DisplayName NVARCHAR(200) NULL,
@@ -364,10 +364,10 @@ CREATE TABLE Robotics.NotificationRecipients (
 );
 
 -- Notification: History (Audit Trail)
-CREATE TABLE Robotics.NotificationHistory (
+CREATE TABLE RoboticsNotificationHistory (
     NotificationHistoryId INT IDENTITY(1,1) PRIMARY KEY,
-    NotificationRuleId INT NULL REFERENCES Robotics.NotificationRules(NotificationRuleId),
-    RunId INT NULL REFERENCES Robotics.Runs(RunId),
+    NotificationRuleId INT NULL REFERENCES RoboticsNotificationRules(NotificationRuleId),
+    RunId INT NULL REFERENCES RoboticsRuns(RunId),
     TriggerTypeCode NVARCHAR(20) NOT NULL,
     Recipients NVARCHAR(MAX) NULL,
     Subject NVARCHAR(500) NOT NULL,
@@ -379,10 +379,10 @@ CREATE TABLE Robotics.NotificationHistory (
 );
 
 -- Indexes
-CREATE INDEX IX_Runs_SiteId ON Robotics.Runs(SiteId);
-CREATE INDEX IX_Runs_StartedAtUtc ON Robotics.Runs(StartedAtUtc DESC);
-CREATE INDEX IX_Runs_IsProcessed ON Robotics.Runs(IsProcessed) WHERE IsProcessed = 0;
-CREATE INDEX IX_NotificationHistory_CreatedAtUtc ON Robotics.NotificationHistory(CreatedAtUtc DESC);
+CREATE INDEX IX_Runs_SiteId ON RoboticsRuns(SiteId);
+CREATE INDEX IX_Runs_StartedAtUtc ON RoboticsRuns(StartedAtUtc DESC);
+CREATE INDEX IX_Runs_IsProcessed ON RoboticsRuns(IsProcessed) WHERE IsProcessed = 0;
+CREATE INDEX IX_NotificationHistory_CreatedAtUtc ON RoboticsNotificationHistory(CreatedAtUtc DESC);
 GO
 ```
 
@@ -390,15 +390,15 @@ GO
 
 ```sql
 -- Demo Site
-INSERT INTO Robotics.Sites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken)
+INSERT INTO RoboticsSites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken)
 VALUES ('SITE001', 'Demo Factory', 'https://orbit.demo.local', 'your-api-token-here');
 
 -- Demo Robot
-INSERT INTO Robotics.Robots (SiteId, Hostname, Nickname, TagBasePath)
+INSERT INTO RoboticsRobots (SiteId, Hostname, Nickname, TagBasePath)
 VALUES (1, 'spot-001', 'Spot 001', '[default]Enterprise/Site001/Assembly/Line001/Spot001');
 
 -- Sample Notification Rules
-INSERT INTO Robotics.NotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, EmailSubjectTemplate, EmailBodyTemplate)
+INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, EmailSubjectTemplate, EmailBodyTemplate)
 VALUES 
 (1, 'Mission Failed Alert', 'RUN_FAIL', NULL, 
  '[ALERT] Mission Failed: {{MissionName}}', 
@@ -408,7 +408,7 @@ VALUES
  'Inspection mission {{MissionName}} completed successfully. Duration: {{Duration}} minutes.');
 
 -- Recipients for rules
-INSERT INTO Robotics.NotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
+INSERT INTO RoboticsNotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
 VALUES 
 (1, 'to', 'operator@company.com', 'Operator Team'),
 (1, 'cc', 'maintenance@company.com', 'Maintenance Team'),
@@ -603,7 +603,7 @@ def upsert_run(run_uuid, mission_name, status_code, robot_hostname, run_data):
     """Insert or update run in database."""
     # Get robot_id from hostname
     robot_query = """
-        SELECT RobotId, SiteId FROM Robotics.Robots 
+        SELECT RobotId, SiteId FROM RoboticsRobots 
         WHERE Hostname = ? AND IsActive = 1
     """
     robot_result = system.db.runPrepQuery(robot_query, [robot_hostname], "MSSQL_Robotics")
@@ -615,13 +615,13 @@ def upsert_run(run_uuid, mission_name, status_code, robot_hostname, run_data):
     site_id = robot_result[0]["SiteId"]
     
     # Check if run exists
-    check_query = "SELECT RunId FROM Robotics.Runs WHERE OrbitRunUuid = ?"
+    check_query = "SELECT RunId FROM RoboticsRuns WHERE OrbitRunUuid = ?"
     existing = system.db.runPrepQuery(check_query, [run_uuid], "MSSQL_Robotics")
     
     if len(existing) > 0:
         # Update existing
         update_query = """
-            UPDATE Robotics.Runs 
+            UPDATE RoboticsRuns 
             SET MissionStatusCode = ?, 
                 CompletedAtUtc = CASE WHEN ? IN ('COMP', 'FAIL') THEN SYSUTCDATETIME() ELSE CompletedAtUtc END
             WHERE OrbitRunUuid = ?
@@ -630,7 +630,7 @@ def upsert_run(run_uuid, mission_name, status_code, robot_hostname, run_data):
     else:
         # Insert new
         insert_query = """
-            INSERT INTO Robotics.Runs (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc)
+            INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc)
             VALUES (?, ?, ?, ?, ?, SYSUTCDATETIME())
         """
         system.db.runPrepUpdate(insert_query, [site_id, robot_id, run_uuid, mission_name, status_code], "MSSQL_Robotics")
@@ -662,7 +662,7 @@ def evaluate_and_send_notifications(trigger_type, run_uuid, mission_name, status
     rules_query = """
         SELECT nr.NotificationRuleId, nr.RuleName, nr.MissionNamePattern, 
                nr.EmailSubjectTemplate, nr.EmailBodyTemplate
-        FROM Robotics.NotificationRules nr
+        FROM RoboticsNotificationRules nr
         WHERE nr.TriggerTypeCode = ?
           AND nr.IsActive = 1
           AND (nr.StatusCodeFilter IS NULL OR nr.StatusCodeFilter LIKE '%' + ? + '%')
@@ -680,7 +680,7 @@ def evaluate_and_send_notifications(trigger_type, run_uuid, mission_name, status
         
         # Get recipients
         recipients_query = """
-            SELECT Email, RecipientTypeCode FROM Robotics.NotificationRecipients
+            SELECT Email, RecipientTypeCode FROM RoboticsNotificationRecipients
             WHERE NotificationRuleId = ? AND IsActive = 1
         """
         recipients = system.db.runPrepQuery(recipients_query, [rule_id], "MSSQL_Robotics")
@@ -740,12 +740,12 @@ def render_template(template, variables):
 def log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body, is_sent, error_msg):
     """Log notification to history table."""
     # Get run_id from uuid
-    run_query = "SELECT RunId FROM Robotics.Runs WHERE OrbitRunUuid = ?"
+    run_query = "SELECT RunId FROM RoboticsRuns WHERE OrbitRunUuid = ?"
     run_result = system.db.runPrepQuery(run_query, [run_uuid], "MSSQL_Robotics")
     run_id = run_result[0]["RunId"] if len(run_result) > 0 else None
     
     insert_query = """
-        INSERT INTO Robotics.NotificationHistory 
+        INSERT INTO RoboticsNotificationHistory 
         (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc, ErrorMessage)
         VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN SYSUTCDATETIME() ELSE NULL END, ?)
     """
@@ -780,9 +780,9 @@ SELECT
     r.CompletedAtUtc,
     r.DurationMinutes,
     rob.Nickname AS RobotName
-FROM Robotics.Runs r
-LEFT JOIN Robotics.Robots rob ON r.RobotId = rob.RobotId
-LEFT JOIN Robotics.MissionStatusCodes msc ON r.MissionStatusCode = msc.MissionStatusCode
+FROM RoboticsRuns r
+LEFT JOIN RoboticsRobots rob ON r.RobotId = rob.RobotId
+LEFT JOIN RoboticsMissionStatusCodes msc ON r.MissionStatusCode = msc.MissionStatusCode
 WHERE r.SiteId = :siteId
     AND (:startDate IS NULL OR r.StartedAtUtc >= :startDate)
     AND (:endDate IS NULL OR r.StartedAtUtc < :endDate)
@@ -967,6 +967,6 @@ flowchart TB
 
 ---
 
-*Document maintained by: AME*  
-*Version: 1.0 (Demo MVP)*  
+*Document maintained by: AME-Junsu Lee*  
+*Version: 1.1 (Demo MVP)*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
