@@ -139,7 +139,7 @@ flowchart TB
 
 | Flow | Trigger | Purpose | Update Rate |
 |------|---------|---------|-------------|
-| **Flow A: Polling** | Gateway Timer | Robot status (battery, pose, connection) | Every 15 seconds |
+| **Flow A: Polling** | Gateway Timer | Robot status (battery, pose, connection) | Every 15000ms |
 | **Flow B: Webhook** | Orbit event | Mission events (start, complete, fail) | Event-driven |
 
 ---
@@ -402,17 +402,35 @@ INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, Missio
 VALUES 
 (1, 'Mission Failed Alert', 'RUN_FAIL', NULL, 
  '[ALERT] Mission Failed: {{MissionName}}', 
- 'Robot {{RobotNickname}} failed mission {{MissionName}} at {{CompletedAtUtc}}'),
+ 'Robot {{RobotNickname}} failed mission {{MissionName}} at {{CompletedAtUtc}}. Please investigate immediately.'),
+(1, 'Battery Low Warning', 'BATTERY_LOW', NULL,
+ '[WARNING] Low Battery: {{RobotNickname}}',
+ 'Robot {{RobotNickname}} battery is below 20%. Current level: {{BatteryLevel}}%. Please recharge soon.'),
+(1, 'Robot Connectivity Issue', 'CONNECTIVITY', NULL,
+ '[CRITICAL] Robot Connection Lost: {{RobotNickname}}',
+ 'Robot {{RobotNickname}} has lost connection to Orbit. Last seen: {{LastSeenUtc}}. Check network and robot status.'),
 (1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', 
  '[INFO] Inspection Complete: {{MissionName}}', 
- 'Inspection mission {{MissionName}} completed successfully. Duration: {{Duration}} minutes.');
+ 'Inspection mission {{MissionName}} completed successfully on {{CompletedAtUtc}}. Duration: {{Duration}} minutes. Review results in Orbit.');
 
 -- Recipients for rules
 INSERT INTO RoboticsNotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
 VALUES 
-(1, 'to', 'operator@company.com', 'Operator Team'),
-(1, 'cc', 'maintenance@company.com', 'Maintenance Team'),
-(2, 'to', 'quality@company.com', 'Quality Team');
+-- Rule 1: Mission Failures
+(1, 'to', 'your.email@example.com', 'Operations Team'),
+(1, 'cc', 'your.email@example.com', 'Robotics Manager'),
+
+-- Rule 2: Battery Low Alerts
+(2, 'to', 'your.email@example.com', 'Maintenance Team'),
+(2, 'cc', 'your.email@example.com', 'Operations Team'),
+
+-- Rule 3: Robot Connectivity Issues
+(3, 'to', 'your.email@example.com', 'IT Support'),
+(3, 'cc', 'your.email@example.com', 'Maintenance Team'),
+
+-- Rule 4: Inspection Complete (informational)
+(4, 'to', 'your.email@example.com', 'Quality Team'),
+(4, 'cc', 'your.email@example.com', 'Operations Team');
 GO
 ```
 
@@ -459,7 +477,7 @@ SpotRobot (UDT)
 ```python
 """
 Gateway Timer Script: Poll robot status from Orbit API
-Schedule: Every 15 seconds
+Schedule: Every 15000ms
 """
 
 import system
@@ -467,7 +485,7 @@ import json
 
 # Configuration
 ORBIT_BASE_URL = "https://orbit.demo.local"
-ORBIT_API_TOKEN = "your-api-token"  # Move to encrypted property in production
+ORBIT_API_TOKEN = "your-api-token-here"  # Move to encrypted property in production
 SITE_TAG_BASE = "[default]Enterprise/Site001/Assembly/Line001"
 
 def poll_robots():
