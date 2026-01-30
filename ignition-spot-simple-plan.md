@@ -1,8 +1,16 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.1 (Demo)  
-**Last Updated:** 2026-01-29
+**Version:** 1.4 (Demo) - Updated with Ignition Best Practices  
+**Last Updated:** 2026-01-30
+
+> **Key Documentation References:**
+> - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
+> - [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts)
+> - [Web Dev Module](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev)
+> - [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries)
+> - [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient)
+> - [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)
 
 ---
 
@@ -152,7 +160,7 @@ flowchart TB
 
 | Layer | Convention | Example |
 |-------|------------|---------|
-| **SQL Tables** | PascalCase, Plural | `RoboticsRuns`, `RoboticsRobots` |
+| **SQL Tables** | PascalCase, Plural | `RoboticsRuns`, `RoboticsRobots` *(schema-less prefix variant)* |
 | **SQL Columns** | PascalCase | `MissionStatusCode`, `StartedAtUtc` |
 | **Tag Paths** | ISA-95 Hierarchy | `Enterprise/Site/Area/Line/Device/Tag` |
 | **Tag Names** | PascalCase | `BatteryLevel`, `IsConnected`, `MissionStatusCode` |
@@ -186,6 +194,25 @@ flowchart TB
 
 ## 5. Database Schema (Simplified)
 
+**Logical vs Physical Names (important):**
+
+- The ERD below uses **logical entity names** (`Sites`, `Robots`, `Runs`, etc.) for readability.
+- The physical database tables in this project use the **schema-less prefix variant** because `Robotics.<TableName>` cannot be used in the target environment.
+  - Physical table examples: `RoboticsSites`, `RoboticsRobots`, `RoboticsRuns`
+
+**Logical → Physical mapping (Demo MVP):**
+
+| Logical Entity | Physical Table |
+|---------------|----------------|
+| `Sites` | `RoboticsSites` |
+| `Robots` | `RoboticsRobots` |
+| `Runs` | `RoboticsRuns` |
+| `NotificationRules` | `RoboticsNotificationRules` |
+| `NotificationRecipients` | `RoboticsNotificationRecipients` |
+| `NotificationHistories` | `RoboticsNotificationHistories` |
+| `MissionStatusCodes` | `RoboticsMissionStatusCodes` |
+| `TriggerTypeCodes` | `RoboticsTriggerTypeCodes` |
+
 ### 5.1 Entity Relationship Diagram
 
 ```mermaid
@@ -196,10 +223,10 @@ erDiagram
     
     Robots ||--o{ Runs : executes
     
-    Runs ||--o{ NotificationHistory : generates
+    Runs ||--o{ NotificationHistories : generates
     
     NotificationRules ||--o{ NotificationRecipients : has
-    NotificationRules ||--o{ NotificationHistory : triggers
+    NotificationRules ||--o{ NotificationHistories : triggers
 
     Sites {
         int SiteId PK
@@ -207,6 +234,8 @@ erDiagram
         string Name
         string OrbitBaseUrl
         string OrbitApiToken
+        string SmtpHost
+        string FromAddr
         bit IsActive
         datetime CreatedAtUtc
     }
@@ -253,7 +282,7 @@ erDiagram
         bit IsActive
     }
     
-    NotificationHistory {
+    NotificationHistories {
         int NotificationHistoryId PK
         int NotificationRuleId FK
         int RunId FK
@@ -271,14 +300,17 @@ erDiagram
 -- ROBOTICS SCHEMA - Demo MVP
 -- ============================================================
 
-CREATE SCHEMA Robotics;
-GO
+-- NOTE:
+-- This plan uses the schema-less naming variant where tables are created in dbo
+-- and prefixed with "Robotics" (e.g., RoboticsRuns) because Robotics.<Table> is
+-- not available in the target environment.
 
 -- Lookup: Mission Status Codes
 CREATE TABLE RoboticsMissionStatusCodes (
-    MissionStatusCode NVARCHAR(10) NOT NULL PRIMARY KEY,
+    MissionStatusCode NVARCHAR(10) NOT NULL,
     Description NVARCHAR(100) NOT NULL,
-    DisplayOrder INT NOT NULL DEFAULT 0
+    DisplayOrder INT NOT NULL DEFAULT 0,
+    CONSTRAINT PK_RoboticsMissionStatusCodes PRIMARY KEY (MissionStatusCode)
 );
 
 INSERT INTO RoboticsMissionStatusCodes VALUES
@@ -289,8 +321,9 @@ INSERT INTO RoboticsMissionStatusCodes VALUES
 
 -- Lookup: Trigger Types
 CREATE TABLE RoboticsTriggerTypeCodes (
-    TriggerTypeCode NVARCHAR(20) NOT NULL PRIMARY KEY,
-    Description NVARCHAR(100) NOT NULL
+    TriggerTypeCode NVARCHAR(20) NOT NULL,
+    Description NVARCHAR(100) NOT NULL,
+    CONSTRAINT PK_RoboticsTriggerTypeCodes PRIMARY KEY (TriggerTypeCode)
 );
 
 INSERT INTO RoboticsTriggerTypeCodes VALUES
@@ -300,74 +333,90 @@ INSERT INTO RoboticsTriggerTypeCodes VALUES
 
 -- Core: Sites
 CREATE TABLE RoboticsSites (
-    SiteId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteCode NVARCHAR(20) NOT NULL UNIQUE,
+    SiteId INT IDENTITY(1,1) NOT NULL,
+    SiteCode NVARCHAR(20) NOT NULL,
     Name NVARCHAR(200) NOT NULL,
     OrbitBaseUrl NVARCHAR(500) NOT NULL,
     OrbitApiToken NVARCHAR(500) NULL,
+    SmtpHost NVARCHAR(200) NULL,        -- SMTP server for notifications (NULL = use fallback)
+    FromAddr NVARCHAR(200) NULL,        -- Email "from" address (NULL = use fallback)
     IsActive BIT NOT NULL DEFAULT 1,
-    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_RoboticsSites PRIMARY KEY (SiteId),
+    CONSTRAINT UQ_RoboticsSites_SiteCode UNIQUE (SiteCode)
 );
 
 -- Core: Robots
 CREATE TABLE RoboticsRobots (
-    RobotId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NOT NULL REFERENCES RoboticsSites(SiteId),
+    RobotId INT IDENTITY(1,1) NOT NULL,
+    SiteId INT NOT NULL,
     Hostname NVARCHAR(100) NOT NULL,
     Nickname NVARCHAR(100) NULL,
     TagBasePath NVARCHAR(500) NULL,
     IsActive BIT NOT NULL DEFAULT 1,
     LastSeenAtUtc DATETIME2(3) NULL,
     CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT UQ_Robots_SiteHostname UNIQUE (SiteId, Hostname)
+    CONSTRAINT PK_RoboticsRobots PRIMARY KEY (RobotId),
+    CONSTRAINT FK_RoboticsRobots_RoboticsSites FOREIGN KEY (SiteId) REFERENCES RoboticsSites(SiteId),
+    CONSTRAINT UQ_RoboticsRobots_SiteId_Hostname UNIQUE (SiteId, Hostname)
 );
 
 -- Core: Runs (Mission Executions)
 CREATE TABLE RoboticsRuns (
-    RunId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NOT NULL REFERENCES RoboticsSites(SiteId),
-    RobotId INT NULL REFERENCES RoboticsRobots(RobotId),
-    OrbitRunUuid NVARCHAR(100) NOT NULL UNIQUE,
+    RunId INT IDENTITY(1,1) NOT NULL,
+    SiteId INT NOT NULL,
+    RobotId INT NULL,
+    OrbitRunUuid NVARCHAR(100) NOT NULL,
     MissionName NVARCHAR(200) NULL,
-    MissionStatusCode NVARCHAR(10) NULL REFERENCES RoboticsMissionStatusCodes(MissionStatusCode),
+    MissionStatusCode NVARCHAR(10) NULL,
     StartedAtUtc DATETIME2(3) NULL,
     CompletedAtUtc DATETIME2(3) NULL,
     DurationMinutes AS DATEDIFF(MINUTE, StartedAtUtc, CompletedAtUtc),
     IsProcessed BIT NOT NULL DEFAULT 0,
-    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_RoboticsRuns PRIMARY KEY (RunId),
+    CONSTRAINT FK_RoboticsRuns_RoboticsSites FOREIGN KEY (SiteId) REFERENCES RoboticsSites(SiteId),
+    CONSTRAINT FK_RoboticsRuns_RoboticsRobots FOREIGN KEY (RobotId) REFERENCES RoboticsRobots(RobotId),
+    CONSTRAINT FK_RoboticsRuns_RoboticsMissionStatusCodes FOREIGN KEY (MissionStatusCode) REFERENCES RoboticsMissionStatusCodes(MissionStatusCode),
+    CONSTRAINT UQ_RoboticsRuns_OrbitRunUuid UNIQUE (OrbitRunUuid)
 );
 
 -- Notification: Rules
 CREATE TABLE RoboticsNotificationRules (
-    NotificationRuleId INT IDENTITY(1,1) PRIMARY KEY,
-    SiteId INT NULL REFERENCES RoboticsSites(SiteId),
+    NotificationRuleId INT IDENTITY(1,1) NOT NULL,
+    SiteId INT NULL,
     RuleName NVARCHAR(200) NOT NULL,
-    TriggerTypeCode NVARCHAR(20) NOT NULL REFERENCES RoboticsTriggerTypeCodes(TriggerTypeCode),
+    TriggerTypeCode NVARCHAR(20) NOT NULL,
     MissionNamePattern NVARCHAR(200) NULL,  -- NULL = all missions
     StatusCodeFilter NVARCHAR(100) NULL,    -- NULL = all statuses
     EmailSubjectTemplate NVARCHAR(500) NULL,
     EmailBodyTemplate NVARCHAR(MAX) NULL,
     IsActive BIT NOT NULL DEFAULT 1,
     Priority INT NOT NULL DEFAULT 100,
-    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_RoboticsNotificationRules PRIMARY KEY (NotificationRuleId),
+    CONSTRAINT FK_RoboticsNotificationRules_RoboticsSites FOREIGN KEY (SiteId) REFERENCES RoboticsSites(SiteId),
+    CONSTRAINT FK_RoboticsNotificationRules_RoboticsTriggerTypeCodes FOREIGN KEY (TriggerTypeCode) REFERENCES RoboticsTriggerTypeCodes(TriggerTypeCode)
 );
 
 -- Notification: Recipients
 CREATE TABLE RoboticsNotificationRecipients (
-    NotificationRecipientId INT IDENTITY(1,1) PRIMARY KEY,
-    NotificationRuleId INT NOT NULL REFERENCES RoboticsNotificationRules(NotificationRuleId),
+    NotificationRecipientId INT IDENTITY(1,1) NOT NULL,
+    NotificationRuleId INT NOT NULL,
     RecipientTypeCode NVARCHAR(10) NOT NULL DEFAULT 'to',  -- to, cc, bcc
     Email NVARCHAR(200) NOT NULL,
     DisplayName NVARCHAR(200) NULL,
     IsActive BIT NOT NULL DEFAULT 1,
-    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_RoboticsNotificationRecipients PRIMARY KEY (NotificationRecipientId),
+    CONSTRAINT FK_RoboticsNotificationRecipients_RoboticsNotificationRules FOREIGN KEY (NotificationRuleId) REFERENCES RoboticsNotificationRules(NotificationRuleId)
 );
 
 -- Notification: History (Audit Trail)
-CREATE TABLE RoboticsNotificationHistory (
-    NotificationHistoryId INT IDENTITY(1,1) PRIMARY KEY,
-    NotificationRuleId INT NULL REFERENCES RoboticsNotificationRules(NotificationRuleId),
-    RunId INT NULL REFERENCES RoboticsRuns(RunId),
+CREATE TABLE RoboticsNotificationHistories (
+    NotificationHistoryId INT IDENTITY(1,1) NOT NULL,
+    NotificationRuleId INT NULL,
+    RunId INT NULL,
     TriggerTypeCode NVARCHAR(20) NOT NULL,
     Recipients NVARCHAR(MAX) NULL,
     Subject NVARCHAR(500) NOT NULL,
@@ -375,14 +424,18 @@ CREATE TABLE RoboticsNotificationHistory (
     IsSent BIT NOT NULL DEFAULT 0,
     SentAtUtc DATETIME2(3) NULL,
     ErrorMessage NVARCHAR(MAX) NULL,
-    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_RoboticsNotificationHistories PRIMARY KEY (NotificationHistoryId),
+    CONSTRAINT FK_RoboticsNotificationHistories_RoboticsNotificationRules FOREIGN KEY (NotificationRuleId) REFERENCES RoboticsNotificationRules(NotificationRuleId),
+    CONSTRAINT FK_RoboticsNotificationHistories_RoboticsRuns FOREIGN KEY (RunId) REFERENCES RoboticsRuns(RunId),
+    CONSTRAINT FK_RoboticsNotificationHistories_RoboticsTriggerTypeCodes FOREIGN KEY (TriggerTypeCode) REFERENCES RoboticsTriggerTypeCodes(TriggerTypeCode)
 );
 
 -- Indexes
-CREATE INDEX IX_Runs_SiteId ON RoboticsRuns(SiteId);
-CREATE INDEX IX_Runs_StartedAtUtc ON RoboticsRuns(StartedAtUtc DESC);
-CREATE INDEX IX_Runs_IsProcessed ON RoboticsRuns(IsProcessed) WHERE IsProcessed = 0;
-CREATE INDEX IX_NotificationHistory_CreatedAtUtc ON RoboticsNotificationHistory(CreatedAtUtc DESC);
+CREATE INDEX IX_RoboticsRuns_SiteId ON RoboticsRuns(SiteId);
+CREATE INDEX IX_RoboticsRuns_StartedAtUtc ON RoboticsRuns(StartedAtUtc DESC);
+CREATE INDEX IX_RoboticsRuns_IsProcessed ON RoboticsRuns(IsProcessed) WHERE IsProcessed = 0;
+CREATE INDEX IX_RoboticsNotificationHistories_CreatedAtUtc ON RoboticsNotificationHistories(CreatedAtUtc DESC);
 GO
 ```
 
@@ -394,8 +447,16 @@ GO
 -- ============================================================
 
 -- Demo Site
-INSERT INTO RoboticsSites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken)
-VALUES ('SITE001', 'Demo Factory', 'https://orbit.demo.local', 'your-api-token-here');
+-- SmtpHost/FromAddr are optional; if NULL, Python code falls back to hardcoded defaults.
+INSERT INTO RoboticsSites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken, SmtpHost, FromAddr)
+VALUES (
+    'SITE001', 
+    'Demo Factory', 
+    'https://orbit.demo.local', 
+    'your-api-token-here',
+    'smtp.company.com',              -- Replace with your SMTP server (or NULL to use fallback)
+    'factory-alerts@company.com'     -- Replace with your from address (or NULL to use fallback)
+);
 
 -- Demo Robot
 INSERT INTO RoboticsRobots (SiteId, Hostname, Nickname, TagBasePath)
@@ -484,7 +545,7 @@ VALUES
 (1, 1, '550e8400-e29b-41d4-a716-446655440007', 'Inspection-Zone-D', 'PEND', SYSUTCDATETIME(), NULL, 0);
 
 -- Sample Notification History (for audit trail testing)
-INSERT INTO RoboticsNotificationHistory (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc)
+INSERT INTO RoboticsNotificationHistories (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc)
 VALUES 
 -- Successfully sent notifications
 (2, 1, 'RUN_COMP', '["your.email@example.com"]', '[SUCCESS] Mission Completed: Inspection-Zone-A', 
@@ -511,32 +572,111 @@ GO
 
 ### 6.1 Script Organization Overview
 
-Ignition uses **internal project resources** for scripts, not file paths. There are two main approaches for organizing scripts:
+> **Reference:** [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library), [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts), [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)
 
-| Approach | Location | Access Scope | Use Case |
-|----------|----------|--------------|----------|
-| **Gateway Timer Scripts** | Gateway Config > Scripting > Gateway Timer Scripts | Gateway scope only | Background polling, scheduled tasks |
-| **Project Library** | Designer > Project Browser > Scripting > Project Library | Project scope (or Gateway if designated as Gateway Scripting Project) | Reusable functions, shared code modules |
+#### How Ignition Stores Scripts
 
-**Best Practices for This Project:**
+**Important:** Ignition uses **internal project resources** for scripts, NOT file paths. Scripts are stored in Ignition's internal SQLite database as project resources. There are no `.py` files like `project/orbit/poll_robots.py`.
 
-1. **Gateway Timer Script (RobotPolling)**: Create directly in Gateway web interface for the 15-second polling loop
-2. **Web Dev Endpoint**: Create in Designer > Gateway > Web Dev resources
-3. **Optional**: Create Project Library modules for shared helper functions (e.g., `orbitUtils`, `notificationHelpers`)
+| Resource Type | Location | Storage | Access Scope |
+|---------------|----------|---------|--------------|
+| **Project Library** | Designer > Project Browser > Scripting > Project Library | Internal database (project resource) | Project scope; Gateway scope if set as Gateway Scripting Project |
+| **Gateway Event Scripts** | Designer > Project Browser > Scripting > Gateway Events | Internal database (project resource) | Gateway scope (runs regardless of clients) |
+| **Web Dev Resources** | Designer > Project Browser > Web Dev | `.py` and `.json` files in `data/projects/` | HTTP endpoints |
 
-**Important:** Scripts are stored in Ignition's internal database, **not as `.py` files**. There are no file paths like `project/orbit/poll_robots.py` in Ignition.
+#### Recommended Architecture: Project Library + Gateway Timer Script
+
+**Best Practice:** Store reusable logic in **Project Library modules**, then call those modules from **Gateway Timer Scripts**. This provides:
+
+- ✅ **Reusability** - Call functions from multiple places (polling, webhooks, UI buttons)
+- ✅ **Testability** - Test functions in Script Console: `orbit_api.get_robots()`
+- ✅ **Maintainability** - Edit Project Library without restarting gateway events
+- ✅ **Separation of concerns** - Timer = "when", Library = "what"
+
+#### Project Library Structure for This Project
+
+```
+Project: SpotOrbitIntegration
+│
+├── Project Library (Designer > Scripting > Project Library)
+│   │
+│   ├── orbit_api                   ← Orbit API client (reusable HTTP client)
+│   │   ├── _client                 # Cached httpClient instance (heavyweight, reuse!)
+│   │   ├── get_robots()            # GET /api/v0/robots
+│   │   ├── get_runs()              # GET /api/v0/runs
+│   │   └── _make_request()         # Internal helper
+│   │
+│   ├── robot_polling               ← Robot polling logic
+│   │   ├── poll_all_robots()       # Main polling function
+│   │   └── update_robot_tags()     # Write to UDT tags
+│   │
+│   ├── webhook_handlers            ← Webhook processing logic
+│   │   ├── handle_run_event()      # Process run events
+│   │   ├── upsert_run()            # Database upsert
+│   │   └── update_mission_tags()   # Write mission tags
+│   │
+│   ├── notification_engine         ← Notification logic
+│   │   ├── evaluate_rules()        # Match rules to events
+│   │   ├── send_notification()     # Send via SMTP
+│   │   └── render_template()       # {{variable}} replacement
+│   │
+│   └── helpers                     ← Shared utilities
+│       ├── hostname_to_tag_path()  # spot-001 → Spot001
+│       └── get_site_config()       # Read site configuration
+│
+├── Gateway Events (Designer > Scripting > Gateway Events)
+│   │
+│   └── Timer Scripts
+│       └── RobotPolling            ← Simple 1-line executor
+│           Code: robot_polling.poll_all_robots()
+│           Delay: 15000ms, Fixed Rate
+│
+└── Web Dev (Designer > Web Dev)
+    └── orbit/
+        └── webhook                 ← Python Resource (doPost)
+            Code: webhook_handlers.handle_run_event(request)
+```
+
+#### Gateway Scripting Project Setup
+
+For Gateway Timer Scripts to access Project Library modules, configure the **Gateway Scripting Project**:
+
+1. Open Gateway webpage: `http://localhost:8088`
+2. Navigate to **Config > Gateway Settings**
+3. Find **Gateway Scripting Project** setting
+4. Enter your project name: `SpotOrbitIntegration`
+5. Click **Save Changes**
+
+> **Note:** Per [Ignition documentation](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library#gateway-scripting-project), this allows Gateway-scoped resources (like Tag Event Scripts) to access your Project Library. Gateway Event Scripts defined in the Designer don't need this setting—they're project resources that already have access.
+
+#### Important Best Practices from Documentation
+
+1. **Wrap all code in functions or classes** - Code outside functions executes when the Designer loads or project saves
+2. **httpClient instances are heavyweight** - Create once in Project Library and reuse
+3. **Save project after creating scripts** - Project Library scripts aren't accessible until saved
+4. **Use hierarchical logger names** - e.g., `orbit.polling`, `orbit.webhook.notify`
 
 ### 6.2 SpotRobot UDT Definition
 
+> **Reference:** [User Defined Types - UDTs](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts), [UDT Parameters](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts/udt-parameters)
+
+**Location:** Designer > Tag Browser > Tag Provider > _types_ > SpotRobot
+
 ```
-SpotRobot (UDT)
+SpotRobot (UDT Definition)
 │
-├── [Parameters]
+├── [Parameters] ← Configure per instance, referenced in member tags
 │   ├── RobotHostname       : String   -- e.g., "spot-001"
 │   ├── SiteId              : Int      -- FK to Sites table
-│   └── TagBasePath         : String   -- Full tag path
+│   ├── OrbitRobotId        : String   -- Orbit API robot UUID
+│   └── PollEnabled         : Boolean  -- Enable/disable polling for this robot
 │
-├── [Polled Tags] ← Updated by Gateway Timer
+├── [Pre-defined Parameters Available] ← Built-in, no configuration needed
+│   ├── {InstanceName}      -- Name of this UDT instance (e.g., "Spot001")
+│   ├── {PathToParentFolder}-- Full path to containing folder
+│   └── {TagName}           -- Name of the specific tag using this parameter
+│
+├── [Polled Tags] ← Updated by Gateway Timer Script
 │   ├── BatteryLevel        : Float    -- 0-100%
 │   ├── IsConnected         : Boolean
 │   ├── IsCharging          : Boolean
@@ -557,51 +697,328 @@ SpotRobot (UDT)
     └── PollErrorCount      : Int
 ```
 
-### 6.2 Gateway Timer Script: Robot Polling
+**UDT Instance Example:**
+```
+[default]Enterprise/Site001/Assembly/Line001/Spot001  ← Instance of SpotRobot UDT
+    Parameters:
+        RobotHostname = "spot-001"
+        SiteId = 1
+        OrbitRobotId = "abc-123-def"
+        PollEnabled = true
+```
 
-**Location:** Gateway Config > Scripting > Gateway Timer Scripts  
-**Script Name:** `RobotPolling`  
-**Trigger:** Fixed Rate, 15000 ms
+### 6.3 Project Library: orbit_api Module
 
-**Alternative:** If using Project Library, create a script module named `robotPolling` in the Gateway Scripting Project and call `robotPolling.pollRobots()` from the Gateway Timer Script.
+> **Reference:** [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient)
+
+**Location:** Designer > Project Browser > Scripting > Project Library > orbit_api
+
+**Important:** `httpClient` instances are **heavyweight** objects. Per Ignition documentation: *"httpClient instances are heavyweight, so they should be created sparingly and reused as much as possible. For ease of reuse, consider instantiating a new httpClient as a top-level variable in a project library script."*
 
 ```python
 """
-Gateway Timer Script: Poll robot status from Orbit API
-Name: RobotPolling
-Schedule: Every 15000ms
-Location: Gateway Config > Scripting > Gateway Timer Scripts
+Project Library: orbit_api
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Orbit API client with reusable httpClient instance
 """
 
-import system
-import json
+# ==============================================================================
+# HEAVYWEIGHT CLIENT - Created once, reused for all API calls
+# Per Ignition docs: "httpClient instances are heavyweight, so they should be 
+# created sparingly and reused as much as possible"
+# ==============================================================================
+_client = None
 
-# Configuration
+def _get_client():
+    """Get or create the shared httpClient instance."""
+    global _client
+    if _client is None:
+        _client = system.net.httpClient(
+            timeout=30000,  # 30 second timeout
+            bypass_cert_validation=False  # Set True only for dev/testing
+        )
+    return _client
+
+def _get_config():
+    """Get Orbit configuration from database or tags."""
+    # In production, read from database or secure tag
+    return {
+        "base_url": "https://orbit.demo.local",
+        "api_token": "your-api-token-here"  # Move to encrypted storage in production
+    }
+
+def get_robots():
+    """
+    GET /api/v0/robots - Fetch all robots from Orbit API.
+    
+    Returns:
+        list: List of robot dictionaries, or empty list on error
+    """
+    logger = system.util.getLogger("orbit.api.robots")
+    config = _get_config()
+    client = _get_client()
+    
+    try:
+        response = client.get(
+            url=config["base_url"] + "/api/v0/robots",
+            headers={"Authorization": "Bearer " + config["api_token"]}
+        )
+        
+        if response.good:
+            logger.debug("Fetched {} robots".format(len(response.json)))
+            return response.json
+        else:
+            logger.error("API error: {} - {}".format(response.statusCode, response.text))
+            return []
+            
+    except Exception as e:
+        logger.error("Request failed: {}".format(str(e)))
+        return []
+
+def get_runs(limit=100, status=None):
+    """
+    GET /api/v0/runs - Fetch mission runs from Orbit API.
+    
+    Args:
+        limit: Maximum number of runs to fetch
+        status: Optional status filter (started, completed, failed)
+    
+    Returns:
+        list: List of run dictionaries, or empty list on error
+    """
+    logger = system.util.getLogger("orbit.api.runs")
+    config = _get_config()
+    client = _get_client()
+    
+    params = {"limit": limit}
+    if status:
+        params["status"] = status
+    
+    try:
+        response = client.get(
+            url=config["base_url"] + "/api/v0/runs",
+            headers={"Authorization": "Bearer " + config["api_token"]},
+            params=params
+        )
+        
+        if response.good:
+            return response.json
+        else:
+            logger.error("API error: {} - {}".format(response.statusCode, response.text))
+            return []
+            
+    except Exception as e:
+        logger.error("Request failed: {}".format(str(e)))
+        return []
+```
+
+### 6.4 Project Library: robot_polling Module
+
+**Location:** Designer > Project Browser > Scripting > Project Library > robot_polling
+
+```python
+"""
+Project Library: robot_polling
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Robot polling logic - called by Gateway Timer Script
+"""
+
+def poll_all_robots():
+    """
+    Main polling function - called by Gateway Timer Script.
+    Fetches all robots from Orbit API and updates UDT tags.
+    """
+    logger = system.util.getLogger("orbit.polling")
+    
+    try:
+        # Use the shared orbit_api module
+        robots = orbit_api.get_robots()
+        
+        if not robots:
+            logger.warn("No robots returned from API")
+            return
+        
+        for robot in robots:
+            _update_robot_tags(robot)
+        
+        logger.info("Polled {} robots successfully".format(len(robots)))
+        
+    except Exception as e:
+        logger.error("Polling failed: {}".format(str(e)))
+
+def _update_robot_tags(robot_data):
+    """
+    Update tags for a single robot.
+    
+    Args:
+        robot_data: Dictionary from Orbit API /robots endpoint
+    """
+    logger = system.util.getLogger("orbit.polling.tags")
+    
+    hostname = robot_data.get("hostname", "")
+    nickname = robot_data.get("nickname", hostname)
+    
+    # Convert hostname to tag path: spot-001 → Spot001
+    device_name = helpers.hostname_to_tag_path(nickname)
+    tag_base = "[default]Enterprise/Site001/Assembly/Line001/{}".format(device_name)
+    
+    # Prepare tag paths and values
+    tags_to_write = [
+        "{}/BatteryLevel".format(tag_base),
+        "{}/IsConnected".format(tag_base),
+        "{}/IsCharging".format(tag_base),
+        "{}/RobotStateCode".format(tag_base),
+        "{}/Pose/X".format(tag_base),
+        "{}/Pose/Y".format(tag_base),
+        "{}/Pose/Theta".format(tag_base),
+        "{}/LastPollAtUtc".format(tag_base),
+    ]
+    
+    pose = robot_data.get("pose", {})
+    values = [
+        robot_data.get("batteryLevel", 0.0),
+        robot_data.get("isConnected", False),
+        robot_data.get("isCharging", False),
+        robot_data.get("state", "unknown"),
+        pose.get("x", 0.0),
+        pose.get("y", 0.0),
+        pose.get("theta", 0.0),
+        system.date.now(),
+    ]
+    
+    # Write all tags in single blocking call
+    results = system.tag.writeBlocking(tags_to_write, values)
+    
+    # Check for write errors
+    for i, result in enumerate(results):
+        if result.quality.name != "Good":
+            logger.warn("Failed to write {}: {}".format(tags_to_write[i], result.quality))
+```
+
+### 6.5 Project Library: helpers Module
+
+**Location:** Designer > Project Browser > Scripting > Project Library > helpers
+
+```python
+"""
+Project Library: helpers
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Shared utility functions
+"""
+
+def hostname_to_tag_path(hostname):
+    """
+    Convert robot hostname/nickname to tag path format.
+    
+    Examples:
+        "spot-001" → "Spot001"
+        "Spot 001" → "Spot001"
+    
+    Args:
+        hostname: Robot hostname or nickname string
+    
+    Returns:
+        str: Formatted tag path component
+    """
+    return hostname.replace("-", "").replace(" ", "").title()
+
+def get_site_config(site_id=1):
+    """
+    Get site configuration from database.
+    
+    Args:
+        site_id: Site ID to fetch configuration for
+    
+    Returns:
+        dict: Site configuration or None if not found
+    """
+    result = system.db.runNamedQuery(
+        "GetSiteConfig", 
+        {"site_id": site_id}
+    )
+    
+    if result and len(result) > 0:
+        return dict(result[0])
+    return None
+```
+
+### 6.6 Gateway Timer Script: RobotPolling
+
+> **Reference:** [Gateway Event Scripts - Timer Script](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#timer-script)
+
+**Location:** Designer > Project Browser > Scripting > Gateway Events > Timer Scripts  
+**Script Name:** `RobotPolling`  
+**Settings:**
+- **Delay:** 15000 (milliseconds)
+- **Delay Type:** Fixed Rate
+- **Enabled:** ✓
+- **Threading:** Shared (or Dedicated if polling takes >1 second)
+
+```python
+"""
+Gateway Timer Script: RobotPolling
+Location: Designer > Scripting > Gateway Events > Timer Scripts
+Schedule: Fixed Rate, 15000ms
+
+This script simply calls the Project Library module.
+All logic is in robot_polling module for reusability and testability.
+"""
+
+# One-line executor - all logic in Project Library
+robot_polling.poll_all_robots()
+```
+
+**Testing:** Before enabling the timer, test in Script Console:
+```python
+# Open: Designer > Tools > Script Console
+robot_polling.poll_all_robots()
+```
+
+### 6.7 Gateway Timer Script: Robot Polling (Alternative - All-in-One)
+
+**Alternative approach:** If you prefer simpler structure without Project Library modules, you can put all logic directly in the Gateway Timer Script. This is acceptable for smaller projects but reduces reusability and testability.
+
+```python
+"""
+Gateway Timer Script: RobotPolling (All-in-One Alternative)
+Location: Designer > Scripting > Gateway Events > Timer Scripts
+Schedule: Fixed Rate, 15000ms
+
+Note: The recommended approach is to use Project Library modules (see section 6.3-6.6).
+This all-in-one version is provided as a simpler alternative for quick demos.
+"""
+
+# Configuration - In production, read from database or secure tags
 ORBIT_BASE_URL = "https://orbit.demo.local"
-ORBIT_API_TOKEN = "your-api-token-here"  # Move to encrypted property in production
+ORBIT_API_TOKEN = "your-api-token-here"
 SITE_TAG_BASE = "[default]Enterprise/Site001/Assembly/Line001"
 
 def poll_robots():
     """Poll all robots from Orbit API and update tags."""
-    logger = system.util.getLogger("orbit.poll_robots")
+    logger = system.util.getLogger("orbit.polling")
     
     try:
+        # Create httpClient (note: ideally reuse via Project Library)
+        client = system.net.httpClient(timeout=30000)
+        
         # Call Orbit API: GET /api/v0/robots
-        headers = {"Authorization": "Bearer " + ORBIT_API_TOKEN}
-        response = system.net.httpGet(
+        response = client.get(
             url=ORBIT_BASE_URL + "/api/v0/robots",
-            headerValues=headers,
-            timeout=10000
+            headers={"Authorization": "Bearer " + ORBIT_API_TOKEN}
         )
         
-        robots = json.loads(response)
+        if not response.good:
+            logger.error("API error: {}".format(response.statusCode))
+            return
+        
+        robots = response.json
         
         for robot in robots:
             hostname = robot.get("hostname", "")
             nickname = robot.get("nickname", hostname)
             
-            # Build tag path (assumes naming: Spot001 for spot-001)
-            device_name = nickname.replace(" ", "").replace("-", "")
+            # Build tag path: spot-001 → Spot001
+            device_name = nickname.replace(" ", "").replace("-", "").title()
             tag_base = "{}/{}".format(SITE_TAG_BASE, device_name)
             
             # Prepare tag writes
@@ -616,15 +1033,15 @@ def poll_robots():
                 "{}/LastPollAtUtc".format(tag_base),
             ]
             
-            # Extract values from API response
+            pose = robot.get("pose", {})
             values = [
                 robot.get("batteryLevel", 0.0),
                 robot.get("isConnected", False),
                 robot.get("isCharging", False),
                 robot.get("state", "unknown"),
-                robot.get("pose", {}).get("x", 0.0),
-                robot.get("pose", {}).get("y", 0.0),
-                robot.get("pose", {}).get("theta", 0.0),
+                pose.get("x", 0.0),
+                pose.get("y", 0.0),
+                pose.get("theta", 0.0),
                 system.date.now(),
             ]
             
@@ -636,54 +1053,119 @@ def poll_robots():
     except Exception as e:
         logger.error("Robot polling failed: {}".format(str(e)))
 
-# Execute
+# Execute the polling function
 poll_robots()
 ```
 
-### 6.4 Web Dev Webhook Endpoint
+### 6.8 Web Dev Webhook Endpoint
 
-**Location:** Designer > Gateway > Web Dev  
-**Resource Name:** `orbit/webhook` (creates endpoint at `/system/webdev/orbit/webhook`)  
-**Method:** POST  
-**Handler Function:** `doPost`
+> **Reference:** [Web Dev Module](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev)
+
+**Location:** Designer > Project Browser > Web Dev  
+**Resource Type:** Python Resource  
+**Resource Name:** `orbit/webhook`  
+**Endpoint URL:** `http://<gateway>:8088/system/webdev/<project>/orbit/webhook`  
+**Method:** POST (enable doPost)
+
+#### Web Dev Resource Configuration
+
+1. Right-click **Web Dev** in Project Browser → **New Python Resource**
+2. Name it `webhook` inside an `orbit` folder (creates `orbit/webhook`)
+3. Check **Enabled** for **doPost** method
+4. Optionally enable **Require HTTPS** for production
+5. Optionally enable **Require Authentication** with appropriate User Source
+
+#### Request Object Properties
+
+Per Ignition documentation, the `request` parameter contains:
+
+| Key | Description |
+|-----|-------------|
+| `request["data"]` | POST body - automatically parsed as dict if Content-Type is `application/json` |
+| `request["headers"]` | Dictionary of HTTP headers |
+| `request["params"]` | URL query parameters |
+| `request["remoteAddr"]` | Client IP address |
+
+#### Return Value Format
+
+Return a dictionary with one of these keys:
+- `{"json": data}` - Returns JSON response (recommended for webhooks)
+- `{"html": string}` - Returns HTML response
+- `{"response": string}` - Returns plain text
 
 ```python
 """
 Web Dev Endpoint: Receive Orbit webhook events
-Path: POST /system/webdev/orbit/webhook
-Location: Designer > Gateway > Web Dev > Resources
+Location: Designer > Project Browser > Web Dev > orbit/webhook
+Endpoint: POST /system/webdev/<project>/orbit/webhook
+
+Return Value Reference:
+- {"json": data} → application/json response
+- {"status": "ok"} → Will be converted to JSON automatically
 """
 
-import json
-import system
-
 def doPost(request, session):
-    """Handle incoming webhook from Orbit."""
+    """
+    Handle incoming webhook from Orbit.
+    
+    Args:
+        request: Dictionary with keys: data, headers, params, remoteAddr, etc.
+        session: Dictionary for session state (cookies must be enabled)
+    
+    Returns:
+        dict: Response dictionary with 'json', 'html', or 'response' key
+    """
     logger = system.util.getLogger("orbit.webhook")
     
     try:
-        # Parse webhook payload
-        payload = json.loads(request["data"])
+        # request["data"] is automatically parsed as dict when Content-Type is application/json
+        payload = request["data"]
+        
+        # If payload is string (non-JSON content type), parse it
+        # NOTE: Ignition 8.1 uses Jython 2.7 where `basestring` exists (Python 3 uses `str`).
+        if isinstance(payload, basestring):
+            import json
+            payload = json.loads(payload)
+        
         event_type = payload.get("type", "")
+        logger.info("Received webhook: {} from {}".format(event_type, request["remoteAddr"]))
         
-        logger.info("Received webhook: {}".format(event_type))
-        
-        # Route by event type
-        if event_type == "run":
-            handle_run_event(payload)
+        # Route by event type - delegate to Project Library modules
+        # Orbit webhook implementations may send values like "run", "run.started", etc.
+        if event_type.startswith("run"):
+            webhook_handlers.handle_run_event(payload)
         else:
             logger.warn("Unknown event type: {}".format(event_type))
         
-        return {"status": "ok"}
+        # Return JSON response
+        return {"json": {"status": "ok", "received": event_type}}
         
     except Exception as e:
         logger.error("Webhook error: {}".format(str(e)))
-        return {"status": "error", "message": str(e)}
+        # Return error response (still 200 OK, but with error in body)
+        return {"json": {"status": "error", "message": str(e)}}
 
+```
+
+### 6.9 Project Library: webhook_handlers Module
+
+**Location:** Designer > Project Browser > Scripting > Project Library > webhook_handlers
+
+```python
+"""
+Project Library: webhook_handlers
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Webhook event processing logic
+"""
 
 def handle_run_event(payload):
-    """Process run (mission) events."""
-    logger = system.util.getLogger("orbit.webhook")
+    """
+    Process run (mission) events from Orbit webhook.
+    
+    Args:
+        payload: Parsed webhook payload dictionary
+    """
+    logger = system.util.getLogger("orbit.webhook.run")
     
     run_data = payload.get("data", {})
     run_uuid = run_data.get("uuid", "")
@@ -700,60 +1182,56 @@ def handle_run_event(payload):
     }
     mission_status_code = status_map.get(status, "PEND")
     
-    # 1. Upsert to database
-    upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname, run_data)
+    # 1. Upsert to database using Named Query
+    _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname)
     
-    # 2. Update tags
-    update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
+    # 2. Update mission tags
+    _update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
     
     # 3. Evaluate notification rules
-    trigger_type = "RUN_" + status.upper()[:4]  # RUN_STAR, RUN_COMP, RUN_FAIL
-    evaluate_and_send_notifications(trigger_type, run_uuid, mission_name, mission_status_code, robot_hostname)
+    trigger_type_map = {
+        "started": "RUN_START",
+        "completed": "RUN_COMP",
+        "failed": "RUN_FAIL",
+    }
+    trigger_type = trigger_type_map.get(status, None)
+    if trigger_type is None:
+        logger.warn("Unhandled run status for trigger mapping: {}".format(status))
+        return
+    notification_engine.evaluate_and_send(trigger_type, run_uuid, mission_name, mission_status_code, robot_hostname)
     
     logger.info("Processed run event: {} - {}".format(mission_name, mission_status_code))
 
 
-def upsert_run(run_uuid, mission_name, status_code, robot_hostname, run_data):
-    """Insert or update run in database."""
-    # Get robot_id from hostname
-    robot_query = """
-        SELECT RobotId, SiteId FROM RoboticsRobots 
-        WHERE Hostname = ? AND IsActive = 1
+def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
     """
-    robot_result = system.db.runPrepQuery(robot_query, [robot_hostname], "MSSQL_Robotics")
+    Insert or update run in database using Named Query.
+    Uses atomic MERGE operation for thread safety.
+    """
+    logger = system.util.getLogger("orbit.webhook.db")
     
-    if len(robot_result) == 0:
-        return  # Robot not registered
-    
-    robot_id = robot_result[0]["RobotId"]
-    site_id = robot_result[0]["SiteId"]
-    
-    # Check if run exists
-    check_query = "SELECT RunId FROM RoboticsRuns WHERE OrbitRunUuid = ?"
-    existing = system.db.runPrepQuery(check_query, [run_uuid], "MSSQL_Robotics")
-    
-    if len(existing) > 0:
-        # Update existing
-        update_query = """
-            UPDATE RoboticsRuns 
-            SET MissionStatusCode = ?, 
-                CompletedAtUtc = CASE WHEN ? IN ('COMP', 'FAIL') THEN SYSUTCDATETIME() ELSE CompletedAtUtc END
-            WHERE OrbitRunUuid = ?
-        """
-        system.db.runPrepUpdate(update_query, [status_code, status_code, run_uuid], "MSSQL_Robotics")
-    else:
-        # Insert new
-        insert_query = """
-            INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc)
-            VALUES (?, ?, ?, ?, ?, SYSUTCDATETIME())
-        """
-        system.db.runPrepUpdate(insert_query, [site_id, robot_id, run_uuid, mission_name, status_code], "MSSQL_Robotics")
+    try:
+        # Use Named Query for secure, maintainable database access
+        rows_affected = system.db.runNamedQuery(
+            "UpsertRun",
+            {
+                "run_uuid": run_uuid,
+                "mission_name": mission_name,
+                "status_code": status_code,
+                "robot_hostname": robot_hostname
+            }
+        )
+        logger.debug("Upserted run {}: {} rows affected".format(run_uuid, rows_affected))
+    except Exception as e:
+        logger.error("Failed to upsert run: {}".format(str(e)))
 
 
-def update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
+def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     """Update mission-related tags for the robot."""
-    # Convert hostname to tag path (spot-001 → Spot001)
-    device_name = robot_hostname.replace("-", "").title()
+    logger = system.util.getLogger("orbit.webhook.tags")
+    
+    # Convert hostname to tag path using helper module
+    device_name = helpers.hostname_to_tag_path(robot_hostname)
     tag_base = "[default]Enterprise/Site001/Assembly/Line001/{}".format(device_name)
     
     tags = [
@@ -765,83 +1243,112 @@ def update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     
     values = [run_uuid, mission_name, status_code, system.date.now()]
     
-    system.tag.writeBlocking(tags, values)
-
-
-def evaluate_and_send_notifications(trigger_type, run_uuid, mission_name, status_code, robot_hostname):
-    """Evaluate notification rules and send matching emails."""
-    logger = system.util.getLogger("orbit.webhook.notify")
+    results = system.tag.writeBlocking(tags, values)
     
-    # Find matching rules
-    rules_query = """
-        SELECT nr.NotificationRuleId, nr.RuleName, nr.MissionNamePattern, 
-               nr.EmailSubjectTemplate, nr.EmailBodyTemplate
-        FROM RoboticsNotificationRules nr
-        WHERE nr.TriggerTypeCode = ?
-          AND nr.IsActive = 1
-          AND (nr.StatusCodeFilter IS NULL OR nr.StatusCodeFilter LIKE '%' + ? + '%')
-        ORDER BY nr.Priority
+    # Check for write errors
+    for i, result in enumerate(results):
+        if result.quality.name != "Good":
+            logger.warn("Failed to write {}: {}".format(tags[i], result.quality))
+```
+
+### 6.10 Project Library: notification_engine Module
+
+**Location:** Designer > Project Browser > Scripting > Project Library > notification_engine
+
+```python
+"""
+Project Library: notification_engine
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Notification rule evaluation and email sending
+"""
+
+def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_hostname):
     """
-    rules = system.db.runPrepQuery(rules_query, [trigger_type, status_code], "MSSQL_Robotics")
+    Evaluate notification rules and send matching emails.
+    
+    Args:
+        trigger_type: Event type (RUN_START, RUN_COMP, RUN_FAIL)
+        run_uuid: Orbit run UUID
+        mission_name: Mission name
+        status_code: Mission status code
+        robot_hostname: Robot hostname
+    """
+    logger = system.util.getLogger("orbit.notification")
+    
+    # Optional but recommended: enrich templates with DB-backed context (times, duration, nickname, tag path).
+    # This avoids relying on placeholders that aren't available in the webhook payload.
+    ctx = None
+    try:
+        ctx_ds = system.db.runNamedQuery("GetRunNotificationContext", {"run_uuid": run_uuid})
+        if ctx_ds and len(ctx_ds) > 0:
+            ctx = dict(ctx_ds[0])
+    except Exception as e:
+        logger.warn("GetRunNotificationContext failed for {}: {}".format(run_uuid, str(e)))
+    
+    battery_level = None
+    try:
+        tag_base_path = (ctx or {}).get("TagBasePath")
+        if tag_base_path:
+            battery_level = system.tag.readBlocking(["{}/BatteryLevel".format(tag_base_path)])[0].value
+    except Exception as e:
+        logger.warn("BatteryLevel read failed for {}: {}".format(run_uuid, str(e)))
+    
+    # Get matching rules using Named Query
+    rules = system.db.runNamedQuery(
+        "GetNotificationRules",
+        {"trigger_type_code": trigger_type, "status_code": status_code}
+    )
     
     for rule in rules:
         rule_id = rule["NotificationRuleId"]
         pattern = rule["MissionNamePattern"]
         
-        # Check mission name pattern match (simple LIKE for demo)
+        # Check mission name pattern match
         if pattern and pattern.replace("%", "") not in mission_name:
             continue
         
         # Get recipients
-        recipients_query = """
-            SELECT Email, RecipientTypeCode FROM RoboticsNotificationRecipients
-            WHERE NotificationRuleId = ? AND IsActive = 1
-        """
-        recipients = system.db.runPrepQuery(recipients_query, [rule_id], "MSSQL_Robotics")
+        recipients = system.db.runNamedQuery(
+            "GetNotificationRecipients",
+            {"rule_id": rule_id}
+        )
         
-        if len(recipients) == 0:
+        if not recipients or len(recipients) == 0:
             continue
         
-        # Build email
+        # Build recipient lists
         to_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "to"]
         cc_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "cc"]
         
-        # Render templates (simple replacement)
-        subject = render_template(rule["EmailSubjectTemplate"], {
-            "MissionName": mission_name,
-            "StatusCode": status_code,
-            "RobotHostname": robot_hostname
-        })
+        if not to_list:
+            continue
         
-        body = render_template(rule["EmailBodyTemplate"], {
+        # Render templates
+        template_vars = {
+            "TriggerTypeCode": trigger_type,
+            "RunUuid": run_uuid,
             "MissionName": mission_name,
             "StatusCode": status_code,
             "RobotHostname": robot_hostname,
-            "RobotNickname": robot_hostname.replace("-", " ").title(),
-            "CompletedAtUtc": str(system.date.now())
-        })
+            "RobotNickname": (ctx or {}).get("RobotNickname") or robot_hostname.replace("-", " ").title(),
+            "StartedAtUtc": (ctx or {}).get("StartedAtUtc"),
+            "CompletedAtUtc": (ctx or {}).get("CompletedAtUtc"),
+            "DurationMinutes": (ctx or {}).get("DurationMinutes"),
+            # Backwards-compatible aliases for common templates
+            "Duration": (ctx or {}).get("DurationMinutes"),
+            "BatteryLevel": battery_level,
+            "LastSeenAtUtc": (ctx or {}).get("LastSeenAtUtc"),
+            "LastSeenUtc": (ctx or {}).get("LastSeenAtUtc")
+        }
+        
+        subject = _render_template(rule["EmailSubjectTemplate"], template_vars)
+        body = _render_template(rule["EmailBodyTemplate"], template_vars)
         
         # Send email
-        try:
-            system.net.sendEmail(
-                smtp="smtp.company.com",
-                fromAddr="ignition@company.com",
-                to=to_list,
-                cc=cc_list if cc_list else None,
-                subject=subject,
-                body=body
-            )
-            
-            # Log success
-            log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, True, None)
-            logger.info("Sent notification for rule: {}".format(rule["RuleName"]))
-            
-        except Exception as e:
-            log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, False, str(e))
-            logger.error("Failed to send notification: {}".format(str(e)))
+        _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body)
 
 
-def render_template(template, variables):
+def _render_template(template, variables):
     """Simple template rendering with {{variable}} syntax."""
     if not template:
         return ""
@@ -851,42 +1358,296 @@ def render_template(template, variables):
     return result
 
 
-def log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body, is_sent, error_msg):
-    """Log notification to history table."""
-    # Get run_id from uuid
-    run_query = "SELECT RunId FROM RoboticsRuns WHERE OrbitRunUuid = ?"
-    run_result = system.db.runPrepQuery(run_query, [run_uuid], "MSSQL_Robotics")
-    run_id = run_result[0]["RunId"] if len(run_result) > 0 else None
+def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body):
+    """Send email and log the notification attempt."""
+    logger = system.util.getLogger("orbit.notification.send")
     
-    insert_query = """
-        INSERT INTO RoboticsNotificationHistory 
-        (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc, ErrorMessage)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN SYSUTCDATETIME() ELSE NULL END, ?)
-    """
-    
-    import json
-    recipients_json = json.dumps(recipients)
-    
-    system.db.runPrepUpdate(insert_query, [
-        rule_id, run_id, trigger_type, recipients_json, subject, body, 
-        is_sent, is_sent, error_msg
-    ], "MSSQL_Robotics")
+    try:
+        # Prefer config-driven SMTP and fromAddr (database, project properties, etc.).
+        # For the demo, fallback to placeholders if not configured.
+        site_config = None
+        try:
+            site_config = helpers.get_site_config(site_id=1)
+        except:
+            site_config = None
+        
+        smtp_host = (site_config or {}).get("SmtpHost") or "smtp.company.com"
+        from_addr = (site_config or {}).get("FromAddr") or "ignition@company.com"
+        
+        system.net.sendEmail(
+            smtp=smtp_host,
+            fromAddr=from_addr,
+            to=to_list,
+            cc=cc_list if cc_list else None,
+            subject=subject,
+            body=body
+        )
+        
+        _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, True, None)
+        logger.info("Sent notification: {}".format(subject))
+        
+    except Exception as e:
+        _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, False, str(e))
+        logger.error("Failed to send notification: {}".format(str(e)))
+
+
+def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body, is_sent, error_msg):
+    """Log notification to history table using Named Query."""
+    try:
+        system.db.runNamedQuery(
+            "InsertNotificationHistory",
+            {
+                "rule_id": rule_id,
+                "run_uuid": run_uuid,
+                "trigger_type_code": trigger_type,
+                "recipients": str(recipients),
+                "subject": subject,
+                "body": body,
+                "is_sent": is_sent,
+                "error_message": error_msg
+            }
+        )
+    except Exception as e:
+        system.util.getLogger("orbit.notification.log").error(
+            "Failed to log notification: {}".format(str(e))
+        )
 ```
 
-### 6.5 Named Queries
+### 6.11 Named Queries
 
-**Location:** Designer > Databases > [Connection] > Named Queries
+> **Reference:** [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries), [Named Query Parameters](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries/named-query-parameters)
 
-| Query Name | Type | Description |
-|------------|------|-------------|
-| `GetAllRobots` | Query | Get all robots for dashboard |
-| `GetMissionHistory` | Query | Get mission history with filters |
-| `GetNotificationRules` | Query | Get active notification rules |
-| `UpsertRun` | Update | Insert or update run record |
+**Location:** Designer > Project Browser > Named Queries
 
-**GetMissionHistory** (Named Query)
+#### Parameter Best Practices
+
+| Parameter Type | When to Use | Security |
+|---------------|-------------|----------|
+| **Value Parameter** (`:paramName`) | WHERE clause values, INSERT/UPDATE values | ✅ Safe - Prevents SQL injection |
+| **QueryString Parameter** (`{paramName}`) | Column names, table names (rare) | ⚠️ Unsafe - Never use with user input |
+| **Database Parameter** | Multi-database connections | ✅ Safe |
+
+**Important:** Always use **Value Parameters** (`:paramName`) for user-provided values. They act like prepared statements and prevent SQL injection.
+
+#### Named Query List
+
+| Query Name | Type | Description | Parameters |
+|------------|------|-------------|------------|
+| `GetAllRobots` | Query | Get all active robots | `:site_id` (Int) |
+| `GetMissionHistory` | Query | Get mission history with filters | `:site_id`, `:start_date`, `:end_date` |
+| `GetNotificationRules` | Query | Get active notification rules | `:trigger_type_code`, `:status_code` |
+| `GetNotificationRecipients` | Query | Get recipients for a rule | `:rule_id` (Int) |
+| `GetRunNotificationContext` | Query | Data used for notification templates | `:run_uuid` (String) |
+| `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, etc. |
+| `GetRobotByHostname` | Query | Find robot by hostname | `:hostname` |
+| `GetSiteConfig` | Query | Get site configuration | `:site_id` |
+| `InsertNotificationHistory` | Update | Log sent notification | Multiple parameters |
+
+#### GetAllRobots
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| site_id | Int4 | 1 |
 
 ```sql
+-- Named Query: GetAllRobots
+SELECT
+    r.RobotId,
+    r.SiteId,
+    r.Hostname,
+    r.Nickname,
+    r.TagBasePath,
+    r.IsActive,
+    r.LastSeenAtUtc
+FROM RoboticsRobots r
+WHERE r.SiteId = :site_id
+  AND r.IsActive = 1
+ORDER BY COALESCE(r.Nickname, r.Hostname) ASC;
+```
+
+#### GetRobotByHostname
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| hostname | String | (required) |
+
+```sql
+-- Named Query: GetRobotByHostname
+SELECT TOP 1
+    r.RobotId,
+    r.SiteId,
+    r.Hostname,
+    r.Nickname,
+    r.TagBasePath,
+    r.LastSeenAtUtc
+FROM RoboticsRobots r
+WHERE r.Hostname = :hostname
+  AND r.IsActive = 1
+ORDER BY r.RobotId DESC;
+```
+
+#### GetSiteConfig
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| site_id | Int4 | 1 |
+
+```sql
+-- Named Query: GetSiteConfig
+-- SmtpHost/FromAddr are nullable; Python code falls back to defaults if NULL.
+SELECT TOP 1
+    s.SiteId,
+    s.SiteCode,
+    s.Name,
+    s.OrbitBaseUrl,
+    s.OrbitApiToken,
+    s.SmtpHost,
+    s.FromAddr
+FROM RoboticsSites s
+WHERE s.SiteId = :site_id
+  AND s.IsActive = 1
+ORDER BY s.SiteId DESC;
+```
+
+#### GetNotificationRules
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| trigger_type_code | String | (required) |
+| status_code | String | null |
+
+```sql
+-- Named Query: GetNotificationRules
+SELECT
+    nr.NotificationRuleId,
+    nr.SiteId,
+    nr.RuleName,
+    nr.TriggerTypeCode,
+    nr.MissionNamePattern,
+    nr.StatusCodeFilter,
+    nr.EmailSubjectTemplate,
+    nr.EmailBodyTemplate,
+    nr.Priority
+FROM RoboticsNotificationRules nr
+WHERE nr.IsActive = 1
+  AND nr.TriggerTypeCode = :trigger_type_code
+  AND (nr.StatusCodeFilter IS NULL OR nr.StatusCodeFilter = :status_code)
+ORDER BY nr.Priority ASC, nr.NotificationRuleId ASC;
+```
+
+#### GetRunNotificationContext
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| run_uuid | String | (required) |
+
+```sql
+-- Named Query: GetRunNotificationContext
+-- Returns data needed to render email templates consistently.
+SELECT TOP 1
+    r.OrbitRunUuid AS RunUuid,
+    r.MissionName,
+    r.MissionStatusCode AS StatusCode,
+    r.StartedAtUtc,
+    r.CompletedAtUtc,
+    r.DurationMinutes,
+    rob.Hostname AS RobotHostname,
+    rob.Nickname AS RobotNickname,
+    rob.TagBasePath,
+    rob.LastSeenAtUtc
+FROM RoboticsRuns r
+LEFT JOIN RoboticsRobots rob ON r.RobotId = rob.RobotId
+WHERE r.OrbitRunUuid = :run_uuid
+ORDER BY r.RunId DESC;
+```
+
+#### InsertNotificationHistory
+
+**Type:** Update Query  
+**Database:** MSSQL_Robotics
+
+**Parameters (recommended):**
+| Name | Type | Default |
+|------|------|---------|
+| rule_id | Int4 | null |
+| run_uuid | String | null |
+| trigger_type_code | String | (required) |
+| recipients | String | null |
+| subject | String | (required) |
+| body | String | null |
+| is_sent | Int1 | 0 |
+| error_message | String | null |
+
+```sql
+-- Named Query: InsertNotificationHistory
+INSERT INTO RoboticsNotificationHistories
+(
+    NotificationRuleId,
+    RunId,
+    TriggerTypeCode,
+    Recipients,
+    Subject,
+    Body,
+    IsSent,
+    SentAtUtc,
+    ErrorMessage
+)
+VALUES
+(
+    :rule_id,
+    (SELECT TOP 1 RunId FROM RoboticsRuns WHERE OrbitRunUuid = :run_uuid ORDER BY RunId DESC),
+    :trigger_type_code,
+    :recipients,
+    :subject,
+    :body,
+    :is_sent,
+    CASE WHEN :is_sent = 1 THEN SYSUTCDATETIME() ELSE NULL END,
+    :error_message
+);
+```
+
+#### GetMissionHistory
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None (real-time data)
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| site_id | Int4 | 1 |
+| start_date | DateTime | null |
+| end_date | DateTime | null |
+| limit | Int4 | 100 |
+
+```sql
+-- Named Query: GetMissionHistory
+-- All parameters use Value Parameter syntax (:param) for SQL injection protection
 SELECT 
     r.RunId,
     r.MissionName,
@@ -899,11 +1660,102 @@ SELECT
 FROM RoboticsRuns r
 LEFT JOIN RoboticsRobots rob ON r.RobotId = rob.RobotId
 LEFT JOIN RoboticsMissionStatusCodes msc ON r.MissionStatusCode = msc.MissionStatusCode
-WHERE r.SiteId = :siteId
-    AND (:startDate IS NULL OR r.StartedAtUtc >= :startDate)
-    AND (:endDate IS NULL OR r.StartedAtUtc < :endDate)
+WHERE r.SiteId = :site_id
+    AND (:start_date IS NULL OR r.StartedAtUtc >= :start_date)
+    AND (:end_date IS NULL OR r.StartedAtUtc < :end_date)
 ORDER BY r.StartedAtUtc DESC
-OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY
+OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY
+```
+
+#### UpsertRun
+
+**Type:** Update Query  
+**Database:** MSSQL_Robotics
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| run_uuid | String | (required) |
+| mission_name | String | null |
+| status_code | String | (required) |
+| robot_hostname | String | (required) |
+
+```sql
+-- Named Query: UpsertRun
+-- Uses MERGE for atomic upsert operation
+MERGE INTO RoboticsRuns AS target
+USING (
+    SELECT 
+        :run_uuid AS OrbitRunUuid,
+        :mission_name AS MissionName,
+        :status_code AS MissionStatusCode,
+        r.RobotId,
+        r.SiteId
+    FROM RoboticsRobots r
+    WHERE r.Hostname = :robot_hostname AND r.IsActive = 1
+) AS source
+ON target.OrbitRunUuid = source.OrbitRunUuid
+WHEN MATCHED THEN
+    UPDATE SET 
+        MissionStatusCode = source.MissionStatusCode,
+        CompletedAtUtc = CASE 
+            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') THEN SYSUTCDATETIME() 
+            ELSE target.CompletedAtUtc 
+        END
+WHEN NOT MATCHED THEN
+    INSERT (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc)
+    VALUES (source.SiteId, source.RobotId, source.OrbitRunUuid, source.MissionName, 
+            source.MissionStatusCode, SYSUTCDATETIME());
+```
+
+#### GetNotificationRecipients
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| rule_id | Int4 | (required) |
+
+```sql
+-- Named Query: GetNotificationRecipients
+-- Returns a normalized list of recipients for a rule.
+SELECT
+    nr.NotificationRecipientId,
+    nr.NotificationRuleId,
+    nr.RecipientTypeCode,
+    nr.Email,
+    nr.DisplayName
+FROM RoboticsNotificationRecipients nr
+WHERE nr.NotificationRuleId = :rule_id
+  AND nr.IsActive = 1
+ORDER BY nr.NotificationRecipientId ASC;
+```
+
+#### Calling Named Queries from Scripts
+
+```python
+# From Project Library or any script
+# Reference: system.db.runNamedQuery()
+
+# Query example - returns dataset
+result = system.db.runNamedQuery(
+    "GetMissionHistory",
+    {"site_id": 1, "start_date": start_date, "end_date": end_date, "limit": 50}
+)
+
+# Update example - returns affected row count
+rows_affected = system.db.runNamedQuery(
+    "UpsertRun",
+    {
+        "run_uuid": run_uuid,
+        "mission_name": mission_name,
+        "status_code": status_code,
+        "robot_hostname": robot_hostname
+    }
+)
 ```
 
 ---
@@ -1014,43 +1866,99 @@ flowchart TB
 
 ## 9. Implementation Checklist
 
+> **Reference:** [Ignition 8 Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)
+
 ### Phase 1: Foundation (Day 1-2)
 
 - [ ] Create MSSQL database and Robotics schema
-- [ ] Execute DDL scripts
-- [ ] Insert seed data (site, robot, sample rules)
+- [ ] Execute DDL scripts (Section 5.2)
+- [ ] Insert seed data - site, robot, sample rules (Section 5.3)
 - [ ] Configure Ignition MSSQL connection (`MSSQL_Robotics`)
+- [ ] Test database connection in Designer
 
-### Phase 2: Polling Flow (Day 2-3)
+### Phase 2: Project Setup (Day 2)
 
-- [ ] Create SpotRobot UDT definition
-- [ ] Create tag instance: `Enterprise/Site001/Assembly/Line001/Spot001`
-- [ ] Create Gateway Timer script named `RobotPolling` in Gateway Config > Scripting > Gateway Timer Scripts
-- [ ] Configure Fixed Rate trigger: 15000 ms
-- [ ] Test polling and verify tag updates
+- [ ] Create project: `SpotOrbitIntegration`
+- [ ] **Configure Gateway Scripting Project:**
+  - Gateway webpage > Config > Gateway Settings
+  - Set Gateway Scripting Project = `SpotOrbitIntegration`
+  - Save Changes
+- [ ] Create Project Library structure:
+  - [ ] `orbit_api` - Orbit API client with reusable httpClient
+  - [ ] `robot_polling` - Polling logic
+  - [ ] `webhook_handlers` - Webhook processing
+  - [ ] `notification_engine` - Notification logic
+  - [ ] `helpers` - Utility functions
+- [ ] **Save project** (Project Library not accessible until saved!)
+- [ ] Test modules in Script Console: `orbit_api.get_robots()`
 
-### Phase 3: Webhook Flow (Day 3-4)
+### Phase 3: Tags & UDT (Day 2-3)
 
-- [ ] Enable Web Dev Module in Gateway Config
-- [ ] Create Web Dev resource named `orbit/webhook` in Designer > Gateway > Web Dev
-- [ ] Implement `doPost` handler function in the resource
-- [ ] Configure Orbit webhook to point to `https://your-ignition-server:8088/system/webdev/orbit/webhook`
+- [ ] Create SpotRobot UDT definition in Tag Browser > _types_
+- [ ] Configure UDT parameters: RobotHostname, SiteId, OrbitRobotId
+- [ ] Create tag instance: `[default]Enterprise/Site001/Assembly/Line001/Spot001`
+- [ ] Set instance parameter values for demo robot
+
+### Phase 4: Polling Flow (Day 3)
+
+- [ ] Create Gateway Timer Script:
+  - Designer > Scripting > Gateway Events > Timer Scripts
+  - Name: `RobotPolling`
+  - Delay: 15000ms, Fixed Rate
+  - Code: `robot_polling.poll_all_robots()`
+- [ ] Enable the timer script
+- [ ] Verify tag updates in Tag Browser
+- [ ] Check Gateway logs for polling messages
+
+### Phase 5: Webhook Flow (Day 3-4)
+
+- [ ] Verify Web Dev Module is installed (Gateway > Config > Modules)
+- [ ] Create Web Dev Python Resource:
+  - Designer > Project Browser > Web Dev
+  - Create folder `orbit`, then resource `webhook`
+  - Enable `doPost` method
+- [ ] Test endpoint with curl or Postman:
+  ```bash
+  curl -X POST http://localhost:8088/system/webdev/SpotOrbitIntegration/orbit/webhook \
+    -H "Content-Type: application/json" \
+    -d '{"type": "run", "data": {"uuid": "test-123", "missionName": "Test", "status": "completed"}}'
+  ```
+- [ ] Configure Orbit webhook URL in Orbit server
 - [ ] Test webhook → database → tag flow
 
-### Phase 4: Notifications (Day 4-5)
+### Phase 6: Named Queries (Day 4)
 
-- [ ] Configure SMTP settings in Ignition
-- [ ] Test `system.net.sendEmail()` function
+- [ ] Create Named Queries:
+  - [ ] `GetMissionHistory` - Query with Value Parameters
+  - [ ] `UpsertRun` - Update Query with MERGE
+  - [ ] `GetNotificationRules` - Query
+  - [ ] `GetRobotByHostname` - Query
+  - [ ] `InsertNotificationHistory` - Update Query
+- [ ] Test each query using Named Query test interface
+- [ ] Update Project Library to use Named Queries
+
+### Phase 7: Notifications (Day 4-5)
+
+- [ ] Configure SMTP profile in Gateway Config > Alarming > Notification
+- [ ] Test `system.net.sendEmail()` in Script Console
+- [ ] Implement `notification_engine` module
 - [ ] Verify notification rules trigger correctly
 - [ ] Check notification history in database
 
-### Phase 5: Perspective UI (Day 5-7)
+### Phase 8: Perspective UI (Day 5-7)
 
-- [ ] Create Named Queries
-- [ ] Build RobotCard template
-- [ ] Build Home dashboard page
-- [ ] Build MissionHistory page
+- [ ] Create view structure (Section 7.1)
+- [ ] Build RobotCard template with tag bindings
+- [ ] Build Home dashboard with Named Query bindings
+- [ ] Build MissionHistory page with filters
 - [ ] Test end-to-end flow
+
+### Phase 9: Testing & Validation
+
+- [ ] Test complete polling → tag update flow
+- [ ] Test complete webhook → database → tag → notification flow
+- [ ] Verify logging in Gateway logs
+- [ ] Document any configuration differences for production
 
 ---
 
@@ -1085,6 +1993,23 @@ flowchart TB
 
 ---
 
+---
+
+## 12. Documentation References Summary
+
+| Topic | Official Documentation |
+|-------|----------------------|
+| **Script Organization** | [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library) |
+| **Gateway Timer Scripts** | [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#timer-script) |
+| **Web Dev Module** | [Web Dev](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev) |
+| **HTTP Client** | [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient) |
+| **Named Queries** | [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries) |
+| **UDT Best Practices** | [User Defined Types](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts) |
+| **Logging** | [system.util.getLogger](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-util/system-util-getLogger) |
+| **Deployment** | [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices) |
+
+---
+
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.1 (Demo MVP)*  
+*Version: 1.4 (Demo MVP) - Updated with Ignition Best Practices*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*

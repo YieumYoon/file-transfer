@@ -23,6 +23,12 @@
 *   **Stored Procedures**: `usp_GetMissionStatus`, `usp_UpsertRobotUnit`
 *   **UDFs**: Scalar `ufn_IsMissionComplete`; TVF `utfn_SplitCsv`
 
+**Schema vs. Prefix (important)**
+
+*   **Preferred (standard MSSQL)**: Use schemas, reference objects as `Robotics.<TableName>` (e.g., `Robotics.RobotUnits`).
+*   **If schemas cannot be used in your environment**: Use a **schema-like prefix** in `dbo` and reference objects as `Robotics<TableName>` (e.g., `RoboticsRobotUnits`).  
+    *This is an approved exception for this project when `Robotics.<tablename>` is not available.*
+
 **Keys & Columns**
 
 *   **PK**: `TableNameId` *(enforced)*; **FK**: `<ReferencedTable>Id`
@@ -35,7 +41,13 @@
 
 **Indexes & Constraints**
 
-*   `PK_<Table>` · `FK_<From>_<To>` · `UQ_<Table>_<Columns>` · `IX_<Table>_<Columns>`
+*   Constraint and index naming is **mandatory**, not optional.
+*   Use these exact patterns:
+    *   `PK_<Table>`
+    *   `FK_<From>_<To>`
+    *   `UQ_<Table>_<Columns>`
+    *   `IX_<Table>_<Columns>`
+*   **Why enforce**: deterministic names speed up debugging (constraint violations), enable repeatable migrations, and keep scripts/queries/docs consistent across environments.
 
 **SQL Example**
 
@@ -60,6 +72,20 @@ BEGIN
   WHERE MissionId = @MissionId
   ORDER BY SpotMissionId DESC;
 END;
+```
+
+**SQL Example (schema-less alternative)**
+
+```sql
+-- If schemas are not available, keep objects in dbo and prefix the table name.
+CREATE TABLE RoboticsRobotUnits (
+  RobotUnitId INT IDENTITY(1,1) PRIMARY KEY,
+  Name NVARCHAR(100) NOT NULL,
+  SerialNumber NVARCHAR(50) NOT NULL,
+  IsActive BIT NOT NULL DEFAULT 1,
+  CreatedAtUtc DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+  UpdatedAtUtc DATETIME2(3) NULL
+);
 ```
 
 ***
