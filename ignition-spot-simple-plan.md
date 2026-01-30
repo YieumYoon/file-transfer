@@ -389,6 +389,10 @@ GO
 ### 5.3 Seed Data (Demo)
 
 ```sql
+-- ============================================================
+-- DEMO SEED DATA - Complete test dataset
+-- ============================================================
+
 -- Demo Site
 INSERT INTO RoboticsSites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken)
 VALUES ('SITE001', 'Demo Factory', 'https://orbit.demo.local', 'your-api-token-here');
@@ -397,42 +401,109 @@ VALUES ('SITE001', 'Demo Factory', 'https://orbit.demo.local', 'your-api-token-h
 INSERT INTO RoboticsRobots (SiteId, Hostname, Nickname, TagBasePath)
 VALUES (1, 'spot-001', 'Spot 001', '[default]Enterprise/Site001/Assembly/Line001/Spot001');
 
--- Sample Notification Rules
+-- Add Missing Trigger Types
+INSERT INTO RoboticsTriggerTypeCodes VALUES
+('BATTERY_LOW', 'Battery Level Below Threshold'),
+('CONNECTIVITY', 'Robot Connection Lost');
+
+-- Sample Notification Rules (All 5 Trigger Types)
 INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, EmailSubjectTemplate, EmailBodyTemplate)
 VALUES 
+-- Rule 1: Mission Started (any mission)
+(1, 'Mission Started Alert', 'RUN_START', NULL, 
+ '[INFO] Mission Started: {{MissionName}}', 
+ 'Robot {{RobotNickname}} has started mission {{MissionName}} at {{StartedAtUtc}}. Monitor progress in dashboard.'),
+
+-- Rule 2: Mission Completed (any mission)
+(1, 'Mission Completed', 'RUN_COMP', NULL, 
+ '[SUCCESS] Mission Completed: {{MissionName}}', 
+ 'Robot {{RobotNickname}} completed mission {{MissionName}} at {{CompletedAtUtc}}. Duration: {{Duration}} minutes.'),
+
+-- Rule 3: Mission Failed (any mission)
 (1, 'Mission Failed Alert', 'RUN_FAIL', NULL, 
  '[ALERT] Mission Failed: {{MissionName}}', 
  'Robot {{RobotNickname}} failed mission {{MissionName}} at {{CompletedAtUtc}}. Please investigate immediately.'),
+
+-- Rule 4: Inspection Complete (specific mission pattern)
+(1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', 
+ '[INFO] Inspection Complete: {{MissionName}}', 
+ 'Inspection mission {{MissionName}} completed successfully on {{CompletedAtUtc}}. Duration: {{Duration}} minutes. Review results in Orbit.'),
+
+-- Rule 5: Battery Low Warning
 (1, 'Battery Low Warning', 'BATTERY_LOW', NULL,
  '[WARNING] Low Battery: {{RobotNickname}}',
  'Robot {{RobotNickname}} battery is below 20%. Current level: {{BatteryLevel}}%. Please recharge soon.'),
+
+-- Rule 6: Robot Connectivity Issue
 (1, 'Robot Connectivity Issue', 'CONNECTIVITY', NULL,
  '[CRITICAL] Robot Connection Lost: {{RobotNickname}}',
- 'Robot {{RobotNickname}} has lost connection to Orbit. Last seen: {{LastSeenUtc}}. Check network and robot status.'),
-(1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', 
- '[INFO] Inspection Complete: {{MissionName}}', 
- 'Inspection mission {{MissionName}} completed successfully on {{CompletedAtUtc}}. Duration: {{Duration}} minutes. Review results in Orbit.');
+ 'Robot {{RobotNickname}} has lost connection to Orbit. Last seen: {{LastSeenUtc}}. Check network and robot status.');
 
--- Recipients for rules
+-- Recipients for rules (using same email with different display names for testing)
 INSERT INTO RoboticsNotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
 VALUES 
--- Rule 1: Mission Failures
+-- Rule 1: Mission Started
 (1, 'to', 'your.email@example.com', 'Operations Team'),
-(1, 'cc', 'your.email@example.com', 'Robotics Manager'),
 
--- Rule 2: Battery Low Alerts
-(2, 'to', 'your.email@example.com', 'Maintenance Team'),
-(2, 'cc', 'your.email@example.com', 'Operations Team'),
+-- Rule 2: Mission Completed
+(2, 'to', 'your.email@example.com', 'Operations Team'),
+(2, 'cc', 'your.email@example.com', 'Management'),
 
--- Rule 3: Robot Connectivity Issues
-(3, 'to', 'your.email@example.com', 'IT Support'),
-(3, 'cc', 'your.email@example.com', 'Maintenance Team'),
+-- Rule 3: Mission Failed
+(3, 'to', 'your.email@example.com', 'Operations Team'),
+(3, 'cc', 'your.email@example.com', 'Robotics Manager'),
 
--- Rule 4: Inspection Complete (informational)
+-- Rule 4: Inspection Complete
 (4, 'to', 'your.email@example.com', 'Quality Team'),
-(4, 'cc', 'your.email@example.com', 'Operations Team');
+(4, 'cc', 'your.email@example.com', 'Operations Team'),
+
+-- Rule 5: Battery Low
+(5, 'to', 'your.email@example.com', 'Maintenance Team'),
+(5, 'cc', 'your.email@example.com', 'Operations Team'),
+
+-- Rule 6: Connectivity Issues
+(6, 'to', 'your.email@example.com', 'IT Support'),
+(6, 'cc', 'your.email@example.com', 'Maintenance Team');
+
+-- Sample Run Data (for testing dashboard and notifications)
+INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc, IsProcessed)
+VALUES 
+-- Completed missions
+(1, 1, '550e8400-e29b-41d4-a716-446655440001', 'Inspection-Zone-A', 'COMP', DATEADD(HOUR, -2, SYSUTCDATETIME()), DATEADD(MINUTE, -105, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440002', 'Patrol-North', 'COMP', DATEADD(HOUR, -4, SYSUTCDATETIME()), DATEADD(HOUR, -3, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440003', 'Inspection-Zone-B', 'COMP', DATEADD(HOUR, -6, SYSUTCDATETIME()), DATEADD(MINUTE, -330, SYSUTCDATETIME()), 1),
+
+-- Failed missions
+(1, 1, '550e8400-e29b-41d4-a716-446655440004', 'Patrol-South', 'FAIL', DATEADD(HOUR, -8, SYSUTCDATETIME()), DATEADD(HOUR, -7, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440005', 'Inspection-Zone-C', 'FAIL', DATEADD(HOUR, -10, SYSUTCDATETIME()), DATEADD(MINUTE, -590, SYSUTCDATETIME()), 1),
+
+-- Currently running mission
+(1, 1, '550e8400-e29b-41d4-a716-446655440006', 'Patrol-East', 'RUN', DATEADD(MINUTE, -15, SYSUTCDATETIME()), NULL, 0),
+
+-- Pending mission
+(1, 1, '550e8400-e29b-41d4-a716-446655440007', 'Inspection-Zone-D', 'PEND', SYSUTCDATETIME(), NULL, 0);
+
+-- Sample Notification History (for audit trail testing)
+INSERT INTO RoboticsNotificationHistory (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc)
+VALUES 
+-- Successfully sent notifications
+(2, 1, 'RUN_COMP', '["your.email@example.com"]', '[SUCCESS] Mission Completed: Inspection-Zone-A', 
+ 'Robot Spot 001 completed mission Inspection-Zone-A. Duration: 15 minutes.', 1, DATEADD(MINUTE, -105, SYSUTCDATETIME())),
+ 
+(3, 4, 'RUN_FAIL', '["your.email@example.com"]', '[ALERT] Mission Failed: Patrol-South', 
+ 'Robot Spot 001 failed mission Patrol-South. Please investigate immediately.', 1, DATEADD(HOUR, -7, SYSUTCDATETIME())),
+
+(4, 3, 'RUN_COMP', '["your.email@example.com"]', '[INFO] Inspection Complete: Inspection-Zone-B', 
+ 'Inspection mission Inspection-Zone-B completed successfully. Duration: 30 minutes.', 1, DATEADD(MINUTE, -330, SYSUTCDATETIME())),
+
+-- Failed to send (for error testing)
+(5, NULL, 'BATTERY_LOW', '["your.email@example.com"]', '[WARNING] Low Battery: Spot 001', 
+ 'Robot Spot 001 battery is below 20%. Current level: 18%. Please recharge soon.', 0, NULL);
+
 GO
 ```
+
+**Note:** Replace `your.email@example.com` with your actual email address for testing. The different `DisplayName` values help you identify which rule triggered each email.
 
 ---
 
