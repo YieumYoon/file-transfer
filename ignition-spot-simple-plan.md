@@ -509,7 +509,24 @@ GO
 
 ## 6. Ignition Implementation
 
-### 6.1 SpotRobot UDT Definition
+### 6.1 Script Organization Overview
+
+Ignition uses **internal project resources** for scripts, not file paths. There are two main approaches for organizing scripts:
+
+| Approach | Location | Access Scope | Use Case |
+|----------|----------|--------------|----------|
+| **Gateway Timer Scripts** | Gateway Config > Scripting > Gateway Timer Scripts | Gateway scope only | Background polling, scheduled tasks |
+| **Project Library** | Designer > Project Browser > Scripting > Project Library | Project scope (or Gateway if designated as Gateway Scripting Project) | Reusable functions, shared code modules |
+
+**Best Practices for This Project:**
+
+1. **Gateway Timer Script (RobotPolling)**: Create directly in Gateway web interface for the 15-second polling loop
+2. **Web Dev Endpoint**: Create in Designer > Gateway > Web Dev resources
+3. **Optional**: Create Project Library modules for shared helper functions (e.g., `orbitUtils`, `notificationHelpers`)
+
+**Important:** Scripts are stored in Ignition's internal database, **not as `.py` files**. There are no file paths like `project/orbit/poll_robots.py` in Ignition.
+
+### 6.2 SpotRobot UDT Definition
 
 ```
 SpotRobot (UDT)
@@ -542,13 +559,18 @@ SpotRobot (UDT)
 
 ### 6.2 Gateway Timer Script: Robot Polling
 
-**Script Path:** `project/orbit/poll_robots.py`  
+**Location:** Gateway Config > Scripting > Gateway Timer Scripts  
+**Script Name:** `RobotPolling`  
 **Trigger:** Fixed Rate, 15000 ms
+
+**Alternative:** If using Project Library, create a script module named `robotPolling` in the Gateway Scripting Project and call `robotPolling.pollRobots()` from the Gateway Timer Script.
 
 ```python
 """
 Gateway Timer Script: Poll robot status from Orbit API
+Name: RobotPolling
 Schedule: Every 15000ms
+Location: Gateway Config > Scripting > Gateway Timer Scripts
 """
 
 import system
@@ -618,15 +640,18 @@ def poll_robots():
 poll_robots()
 ```
 
-### 6.3 Web Dev Webhook Endpoint
+### 6.4 Web Dev Webhook Endpoint
 
-**Path:** `/system/webdev/orbit/webhook`  
-**Method:** POST
+**Location:** Designer > Gateway > Web Dev  
+**Resource Name:** `orbit/webhook` (creates endpoint at `/system/webdev/orbit/webhook`)  
+**Method:** POST  
+**Handler Function:** `doPost`
 
 ```python
 """
 Web Dev Endpoint: Receive Orbit webhook events
 Path: POST /system/webdev/orbit/webhook
+Location: Designer > Gateway > Web Dev > Resources
 """
 
 import json
@@ -848,7 +873,9 @@ def log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body,
     ], "MSSQL_Robotics")
 ```
 
-### 6.4 Named Queries
+### 6.5 Named Queries
+
+**Location:** Designer > Databases > [Connection] > Named Queries
 
 | Query Name | Type | Description |
 |------------|------|-------------|
@@ -998,14 +1025,16 @@ flowchart TB
 
 - [ ] Create SpotRobot UDT definition
 - [ ] Create tag instance: `Enterprise/Site001/Assembly/Line001/Spot001`
-- [ ] Create `poll_robots.py` Gateway Timer script
+- [ ] Create Gateway Timer script named `RobotPolling` in Gateway Config > Scripting > Gateway Timer Scripts
+- [ ] Configure Fixed Rate trigger: 15000 ms
 - [ ] Test polling and verify tag updates
 
 ### Phase 3: Webhook Flow (Day 3-4)
 
-- [ ] Enable Web Dev Module
-- [ ] Create webhook endpoint `/orbit/webhook`
-- [ ] Configure Orbit webhook to point to Ignition
+- [ ] Enable Web Dev Module in Gateway Config
+- [ ] Create Web Dev resource named `orbit/webhook` in Designer > Gateway > Web Dev
+- [ ] Implement `doPost` handler function in the resource
+- [ ] Configure Orbit webhook to point to `https://your-ignition-server:8088/system/webdev/orbit/webhook`
 - [ ] Test webhook → database → tag flow
 
 ### Phase 4: Notifications (Day 4-5)
