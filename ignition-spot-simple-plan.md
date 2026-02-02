@@ -40,7 +40,7 @@
 | In Scope | Out of Scope (Future) |
 |----------|----------------------|
 | Single site, 1-2 robots | Multi-site federation |
-| Basic polling (15s) | Store & Forward historian |
+| Basic polling (60s) | Store & Forward historian |
 | Webhook for run events | Complex alarm pipelines |
 | Simple email notifications | SMS/Push notifications |
 | Basic Perspective dashboard | Role-based multi-dashboards |
@@ -121,7 +121,7 @@ flowchart TB
 
     subgraph IGNITION["🔧 IGNITION GATEWAY"]
         subgraph DATA_FLOW["Data Collection"]
-            POLL[Gateway Timer<br/>Poll every 15s]
+            POLL[Gateway Timer<br/>Poll every 60s]
             WEBDEV[Web Dev Module<br/>/orbit/webhook]
         end
         
@@ -159,7 +159,7 @@ flowchart TB
 
 | Flow | Trigger | Purpose | Update Rate |
 |------|---------|---------|-------------|
-| **Flow A: Polling** | Gateway Timer | Robot status (battery, pose, connection) | Every 15000ms |
+| **Flow A: Polling** | Gateway Timer | Mission runs sync (backup to webhooks) | Every 60000ms |
 | **Flow B: Webhook** | Orbit event | Mission events (start, complete, fail) | Event-driven |
 
 ---
@@ -649,17 +649,17 @@ INSERT INTO RoboticsNotificationHistories (NotificationRuleId, RunId, TriggerTyp
 VALUES 
 -- Successfully sent notifications
 (2, 1, 'RUN_COMP', '["your.email@example.com"]', '[SUCCESS] Mission Completed: Inspection-Zone-A', 
- 'Robot Spot 001 completed mission Inspection-Zone-A. Duration: 15 minutes.', 1, DATEADD(MINUTE, -105, SYSUTCDATETIME())),
+ 'Robot Assembly Line Spot completed mission Inspection-Zone-A. Duration: 15 minutes.', 1, DATEADD(MINUTE, -105, SYSUTCDATETIME())),
  
 (3, 4, 'RUN_FAIL', '["your.email@example.com"]', '[ALERT] Mission Failed: Patrol-South', 
- 'Robot Spot 001 failed mission Patrol-South. Please investigate immediately.', 1, DATEADD(HOUR, -7, SYSUTCDATETIME())),
+ 'Robot Assembly Line Spot failed mission Patrol-South. Please investigate immediately.', 1, DATEADD(HOUR, -7, SYSUTCDATETIME())),
 
 (4, 3, 'RUN_COMP', '["your.email@example.com"]', '[INFO] Inspection Complete: Inspection-Zone-B', 
  'Inspection mission Inspection-Zone-B completed successfully. Duration: 30 minutes.', 1, DATEADD(MINUTE, -330, SYSUTCDATETIME())),
 
 -- Failed to send (for error testing)
-(5, NULL, 'BATTERY_LOW', '["your.email@example.com"]', '[WARNING] Low Battery: Spot 001', 
- 'Robot Spot 001 battery is below 20%. Current level: 18%. Please recharge soon.', 0, NULL);
+(5, NULL, 'BATTERY_LOW', '["your.email@example.com"]', '[WARNING] Low Battery: Assembly Line Spot', 
+ 'Robot Assembly Line Spot battery is below 20%. Current level: 18%. Please recharge soon.', 0, NULL);
 
 GO
 ```
@@ -2151,7 +2151,7 @@ def verify_test_results(run_uuid):
     # Check 1: Database record
     try:
         ds = system.db.runPrepQuery(
-            "SELECT * FROM Run WHERE RunUuid = ?",
+            "SELECT * FROM RoboticsRuns WHERE OrbitRunUuid = ?",
             [run_uuid],
             database="MSSQL_Robotics"
         )
@@ -2179,7 +2179,9 @@ def verify_test_results(run_uuid):
     # Check 3: Notification history
     try:
         ds = system.db.runPrepQuery(
-            "SELECT * FROM NotificationHistory WHERE RunUuid = ?",
+            """SELECT nh.* FROM RoboticsNotificationHistories nh
+               INNER JOIN RoboticsRuns r ON nh.RunId = r.RunId
+               WHERE r.OrbitRunUuid = ?""",
             [run_uuid],
             database="MSSQL_Robotics"
         )
@@ -2294,18 +2296,20 @@ Run queries in Database Query Browser:
 
 ```sql
 -- Check run was inserted/updated
-SELECT * FROM Run 
-WHERE RunUuid = 'test-run-001'
-ORDER BY LastUpdatedAtUtc DESC;
+SELECT * FROM RoboticsRuns 
+WHERE OrbitRunUuid = 'test-run-001'
+ORDER BY CreatedAtUtc DESC;
 
 -- Check notification history
-SELECT * FROM NotificationHistory 
-WHERE RunUuid = 'test-run-001'
-ORDER BY SentAtUtc DESC;
+SELECT nh.* 
+FROM RoboticsNotificationHistories nh
+INNER JOIN RoboticsRuns r ON nh.RunId = r.RunId
+WHERE r.OrbitRunUuid = 'test-run-001'
+ORDER BY nh.SentAtUtc DESC;
 
 -- Check run counts by status
 SELECT MissionStatusCode, COUNT(*) as Count
-FROM Run
+FROM RoboticsRuns
 GROUP BY MissionStatusCode;
 ```
 
@@ -2399,15 +2403,15 @@ performance_test(20)
 | Query Name | Type | Description | Parameters |
 |------------|------|-------------|------------|
 | `GetAllRobots` | Query | Get all active robots | `:site_id` (Int) |
-| `GetMissionHistory` | Query | Get mission history with filters | `:site_id`, `:start_date`, `:end_date` |
+| `GetMissionHistory` | Query | Get mission history with filters | `:site_id`, `:start_date`, `:end_date`, `:limit` |
 | `GetNotificationRules` | Query | Get active notification rules | `:trigger_type_code`, `:status_code` |
 | `GetNotificationRecipients` | Query | Get recipients for a rule | `:rule_id` (Int) |
 | `GetRunNotificationContext` | Query | Data used for notification templates | `:run_uuid` (String) |
-| `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, etc. |
+| `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, `:robot_hostname` |
 | `GetRobotByHostname` | Query | Find robot by hostname | `:hostname` |
 | `GetRobotTagPath` | Query | Get robot's tag base path (for production/multi-site) | `:hostname` |
-| `GetSiteConfig` | Query | Get site configuration | `:site_id` |
-| `InsertNotificationHistory` | Update | Log sent notification | Multiple parameters |
+| `GetSiteConfig` | Query | Get site configuration (SMTP, Orbit URL, etc.) | `:site_id` (Int) |
+| `InsertNotificationHistory` | Update | Log sent notification | `:rule_id`, `:run_uuid`, `:trigger_type_code`, `:subject`, `:is_sent`, etc. |
 
 #### GetAllRobots
 
@@ -2881,7 +2885,7 @@ flowchart TB
 - [x] ~~**Configure Gateway Scripting Project**~~ *(Not needed for this project)*
   - Gateway Timer Scripts and Web Dev endpoints created within the project already have access to the Project Library
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
-- [ ] Create Project Library structure:
+- [x] Create Project Library structure:
   - [x] `orbit_api` - Orbit API client with reusable httpClient (⚠️ **Note:** Returns config data only, not telemetry)
   - [x] `runs_polling` - Mission runs polling logic (renamed from `robot_polling` in v1.9)
   - [x] `webhook_handlers` - Webhook processing
@@ -2892,33 +2896,46 @@ flowchart TB
 
 ### Phase 3: Tags & UDT (Day 2-3)
 
-- [ ] Create SpotRobot UDT definition in Tag Browser > _types_ (See Section 6.2)
-- [ ] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId
-- [ ] Create tag instance using **hostname-based naming**: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
+- [x] Create SpotRobot UDT definition in Tag Browser > _types_ (See Section 6.2)
+- [x] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId
+- [x] Create tag instance using **hostname-based naming**: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
   - ⚠️ **Important:** Use actual Orbit hostname for tag instance name (e.g., `spot-BD-12345678`)
   - This ensures consistency with Orbit API and database configuration
-- [ ] Set instance parameter values:
+- [x] Set instance parameter values:
   - RobotHostname: `spot-BD-12345678` (match your robot's actual hostname)
   - SiteId: `1`
-- [ ] ⚠️ **Note:** Telemetry tags (BatteryLevel, Pose, etc.) are placeholders - Orbit does not provide this data. See Section 11.2 for future Spot SDK integration.
+- [x] ⚠️ **Note:** Telemetry tags (BatteryLevel, Pose, etc.) are placeholders - Orbit does not provide this data. See Section 11.2 for future Spot SDK integration.
 
 ### Phase 4: Runs Polling Flow (Day 3)
 
 > **Note (v1.9):** This polls mission RUNS, not robot telemetry. Real-time battery/pose data requires Spot SDK middleware (Section 11.2).
 
-- [ ] Create Gateway Timer Script:
+- [x] Create Gateway Timer Script:
   - Designer > Scripting > Gateway Events > Timer Scripts
   - Name: `RunsPolling`
   - Delay: 60000ms (60 seconds), Fixed Rate
   - Code: `runs_polling.poll_recent_runs()`
-- [ ] Create Gateway Startup Script:
+- [x] Create Gateway Startup Script:
   - Designer > Scripting > Gateway Events > Startup
   - Code: `runs_polling.sync_robot_config()` and `runs_polling.poll_recent_runs()`
-- [ ] Enable the timer script
-- [ ] Verify mission tag updates in Tag Browser (MissionName, MissionStatusCode, etc.)
-- [ ] Check Gateway logs for polling messages
+- [x] Enable the timer script
+- [x] Verify mission tag updates in Tag Browser (MissionName, MissionStatusCode, etc.)
+- [x] Check Gateway logs for polling messages
 
-### Phase 5: Webhook Flow (Day 3-4)
+### Phase 5: Named Queries (Day 3)
+
+- [ ] Create Named Queries:
+  - [ ] `GetMissionHistory` - Query with Value Parameters
+  - [ ] `UpsertRun` - Update Query with MERGE
+  - [ ] `GetNotificationRules` - Query
+  - [ ] `GetRobotByHostname` - Query
+  - [ ] `InsertNotificationHistory` - Update Query
+  - [ ] `GetNotificationRecipients` - Query
+  - [ ] `GetRunNotificationContext` - Query
+- [ ] Test each query using Named Query test interface
+- [ ] Update Project Library to use Named Queries
+
+### Phase 6: Webhook Flow (Day 3-4)
 
 - [ ] Verify Web Dev Module is installed (Gateway > Config > Modules)
 - [ ] Create Web Dev Python Resource:
@@ -2933,17 +2950,6 @@ flowchart TB
   ```
 - [ ] Configure Orbit webhook URL in Orbit server
 - [ ] Test webhook → database → tag flow
-
-### Phase 6: Named Queries (Day 4)
-
-- [ ] Create Named Queries:
-  - [ ] `GetMissionHistory` - Query with Value Parameters
-  - [ ] `UpsertRun` - Update Query with MERGE
-  - [ ] `GetNotificationRules` - Query
-  - [ ] `GetRobotByHostname` - Query
-  - [ ] `InsertNotificationHistory` - Update Query
-- [ ] Test each query using Named Query test interface
-- [ ] Update Project Library to use Named Queries
 
 ### Phase 7: Notifications (Day 4-5)
 
