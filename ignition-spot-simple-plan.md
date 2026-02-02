@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.5 (Demo) - Corrected Gateway Scripting Project guidance  
+**Version:** 1.6 (Demo) - Added filter for invalid robot list  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -727,6 +727,14 @@ SpotRobot (UDT Definition)
 
 **Important:** `httpClient` instances are **heavyweight** objects. Per Ignition documentation: *"httpClient instances are heavyweight, so they should be created sparingly and reused as much as possible. For ease of reuse, consider instantiating a new httpClient as a top-level variable in a project library script."*
 
+**Robot Validation Strategy:** The Orbit API may return robots with empty or invalid data (e.g., empty hostname, null values). This module implements a **defense-in-depth approach**:
+
+1. **Primary Filtering** (`_is_valid_robot()`): Validates and filters robots at the API level before returning them
+2. **Secondary Validation** (in `robot_polling.poll_all_robots()`): Additional checks when processing robots
+3. **Logging**: Invalid robots are logged with warnings for debugging and audit purposes
+
+This ensures that only valid robots with required fields (hostname, robotIndex) are processed by the polling logic.
+
 ```python
 """
 Project Library: orbit_api
@@ -762,9 +770,10 @@ def _get_config():
 def get_robots():
     """
     GET /api/v0/robots - Fetch all robots from Orbit API.
+    Filters out invalid robots with empty/null required fields.
     
     Returns:
-        list: List of robot dictionaries, or empty list on error
+        list: List of valid robot dictionaries, or empty list on error
     """
     logger = system.util.getLogger("orbit.api.robots")
     config = _get_config()
@@ -777,8 +786,19 @@ def get_robots():
         )
         
         if response.good:
-            logger.debug("Fetched {} robots".format(len(response.json)))
-            return response.json
+            raw_robots = response.json
+            
+            # Filter out invalid robots (empty hostname, null values, etc.)
+            valid_robots = []
+            for robot in raw_robots:
+                if _is_valid_robot(robot):
+                    valid_robots.append(robot)
+                else:
+                    logger.warn("Skipping invalid robot: {}".format(robot))
+            
+            logger.debug("Fetched {} valid robots (filtered from {} total)".format(
+                len(valid_robots), len(raw_robots)))
+            return valid_robots
         else:
             logger.error("API error: {} - {}".format(response.statusCode, response.text))
             return []
@@ -786,6 +806,32 @@ def get_robots():
     except Exception as e:
         logger.error("Request failed: {}".format(str(e)))
         return []
+
+def _is_valid_robot(robot):
+    """
+    Validate that a robot has required fields.
+    Filters out robots with empty/null hostname or invalid robotIndex.
+    
+    Args:
+        robot: Robot dictionary from API
+        
+    Returns:
+        bool: True if robot is valid, False otherwise
+    """
+    if not robot:
+        return False
+    
+    # Check required field: hostname (must be non-empty string)
+    hostname = robot.get("hostname")
+    if not hostname or hostname == "" or hostname is None:
+        return False
+    
+    # Check robotIndex is valid (must be >= 0)
+    robot_index = robot.get("robotIndex")
+    if robot_index is None or robot_index < 0:
+        return False
+    
+    return True
 
 def get_runs(limit=100, status=None):
     """
@@ -839,21 +885,32 @@ def poll_all_robots():
     """
     Main polling function - called by Gateway Timer Script.
     Fetches all robots from Orbit API and updates UDT tags.
+    Includes validation to skip robots with empty/invalid data.
     """
     logger = system.util.getLogger("orbit.polling")
     
     try:
-        # Use the shared orbit_api module
+        # Use the shared orbit_api module (already filters invalid robots)
         robots = orbit_api.get_robots()
         
         if not robots:
             logger.warn("No robots returned from API")
             return
         
+        # Process each robot with additional validation (defense in depth)
+        processed_count = 0
         for robot in robots:
+            # Secondary validation: skip robots with empty hostname
+            hostname = robot.get("hostname", "")
+            if not hostname:
+                logger.warn("Skipping robot with empty hostname: {}".format(robot))
+                continue
+            
             _update_robot_tags(robot)
+            processed_count += 1
         
-        logger.info("Polled {} robots successfully".format(len(robots)))
+        logger.info("Polled {} valid robots successfully (out of {} total)".format(
+            processed_count, len(robots)))
         
     except Exception as e:
         logger.error("Polling failed: {}".format(str(e)))
@@ -1898,7 +1955,7 @@ flowchart TB
   - Gateway Timer Scripts and Web Dev endpoints created within the project already have access to the Project Library
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [ ] Create Project Library structure:
-  - [ ] `orbit_api` - Orbit API client with reusable httpClient
+  - [x] `orbit_api` - Orbit API client with reusable httpClient
   - [ ] `robot_polling` - Polling logic
   - [ ] `webhook_handlers` - Webhook processing
   - [ ] `notification_engine` - Notification logic
@@ -2025,5 +2082,5 @@ flowchart TB
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.5 (Demo MVP) - Corrected Gateway Scripting Project guidance*  
+*Version: 1.6 (Demo MVP) - Added filter for invalid robot list*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
