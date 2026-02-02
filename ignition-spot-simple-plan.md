@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.6 (Demo) - Added filter for invalid robot list  
+**Version:** 1.7 (Demo) - Centralized tag path configuration with migration strategy + bug fix  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -11,6 +11,14 @@
 > - [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries)
 > - [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient)
 > - [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)
+
+## Version History
+
+| Version | Date       | Changes |
+|---------|------------|---------|
+| **1.7** | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic |
+| **1.6** | 2026-02-02 | Added robot validation filter for invalid/empty robots from Orbit API |
+| **1.5** | 2026-02-01 | Initial simplified demo plan |
 
 ---
 
@@ -189,6 +197,64 @@ flowchart TB
                         ├── Y
                         └── Theta
 ```
+
+### 4.3 Tag Path Configuration Strategy
+
+This project uses a **two-stage migration approach** for tag base paths to support both demo simplicity and production scalability:
+
+#### Stage 1: Demo Mode (Hardcoded Constant)
+
+**When to use:** Single site with 1-2 robots
+
+**Configuration:** Set in `helpers` module
+```python
+TAG_BASE_PATH = "[default]Enterprise/Site001/Assembly/Line001"
+USE_DATABASE_FOR_TAG_PATHS = False
+```
+
+**How it works:**
+- Tag paths are constructed as: `TAG_BASE_PATH + "/" + device_name`
+- Example: `[default]Enterprise/Site001/Assembly/Line001/AssemblyLineSpot`
+- Fast and simple for demo environments
+- **To customize for your environment:** Change `TAG_BASE_PATH` in the helpers module to match your tag provider and hierarchy
+
+#### Stage 2: Production Mode (Database Lookup)
+
+**When to use:** Multiple sites, different tag hierarchies, or 3+ robots
+
+**Configuration:** Set in `helpers` module
+```python
+USE_DATABASE_FOR_TAG_PATHS = True
+```
+
+**How it works:**
+- Tag paths are retrieved from `RoboticsRobots.TagBasePath` column
+- Queries database using `Robotics/GetRobotTagPath` Named Query
+- Supports different tag structures per site/robot
+- Centralized configuration in database
+
+**Migration Example:**
+
+| Robot | Demo Mode Path (Constructed) | Production Mode Path (From DB) |
+|-------|------------------------------|--------------------------------|
+| Spot001 | `[default]Enterprise/Site001/Assembly/Line001/Spot001` | `[default]Enterprise/Site001/Assembly/Line001/Spot001` |
+| Spot002 | `[default]Enterprise/Site001/Assembly/Line001/Spot002` | `[default]Enterprise/Site002/Warehouse/Area03/Spot002` |
+
+**Advantages of This Approach:**
+
+| Benefit | Description |
+|---------|-------------|
+| **Easy Start** | Demo mode requires no database setup for tag paths |
+| **Clean Migration** | Change one flag (`USE_DATABASE_FOR_TAG_PATHS`) to switch modes |
+| **No Code Rewrite** | Both modes use the same `helpers.get_robot_tag_base()` function |
+| **Flexible Scaling** | Production mode supports multi-site with different hierarchies |
+| **Backwards Compatible** | Can test database mode before full cutover |
+
+**Implementation Locations:**
+
+The `helpers.get_robot_tag_base()` function is called in:
+1. `robot_polling._update_robot_tags()` - For polling tag updates
+2. `orbit_webhook._update_mission_tags()` - For webhook tag updates
 
 ---
 
@@ -927,9 +993,11 @@ def _update_robot_tags(robot_data):
     hostname = robot_data.get("hostname", "")
     nickname = robot_data.get("nickname", hostname)
     
-    # Convert nickname to tag path format: "Assembly Line Spot" → "AssemblyLineSpot"
-    device_name = helpers.hostname_to_tag_path(nickname)
-    tag_base = "[default]Enterprise/Site001/Assembly/Line001/{}".format(device_name)
+    # Get tag base path using helper (supports both demo and production modes)
+    tag_base = helpers.get_robot_tag_base(hostname, nickname)
+    if not tag_base:
+        logger.error("Cannot update tags: tag path not found for robot {}".format(hostname))
+        return
     
     # Prepare tag paths and values
     tags_to_write = [
@@ -960,8 +1028,8 @@ def _update_robot_tags(robot_data):
     
     # Check for write errors
     for i, result in enumerate(results):
-        if result.quality.name != "Good":
-            logger.warn("Failed to write {}: {}".format(tags_to_write[i], result.quality))
+        if not result.isGood():
+            logger.error("Failed to write {}: {}".format(tags_to_write[i], result.getName()))
 ```
 
 ### 6.5 Project Library: helpers Module
@@ -974,6 +1042,14 @@ Project Library: helpers
 Location: Designer > Project Browser > Scripting > Project Library
 Purpose: Shared utility functions
 """
+
+# ============================================================
+# CONFIGURATION - Tag Base Path
+# ============================================================
+# For Demo: Hardcoded tag base path (single site)
+# For Production: Set USE_DATABASE_FOR_TAG_PATHS = True and query from RoboticsRobots table
+TAG_BASE_PATH = "[default]Enterprise/Site001/Assembly/Line001"
+USE_DATABASE_FOR_TAG_PATHS = False  # Set True when scaling to multiple sites
 
 def hostname_to_tag_path(name):
     """
@@ -993,6 +1069,63 @@ def hostname_to_tag_path(name):
         str: Formatted tag path component
     """
     return name.replace("-", "").replace(" ", "").title()
+
+def get_robot_tag_base(robot_hostname, robot_nickname=None):
+    """
+    Get the full tag base path for a robot.
+    
+    Migration Strategy:
+        Demo (USE_DATABASE_FOR_TAG_PATHS=False):
+            Returns: TAG_BASE_PATH + formatted device name
+            Example: "[default]Enterprise/Site001/Assembly/Line001/Spot001"
+        
+        Production (USE_DATABASE_FOR_TAG_PATHS=True):
+            Queries RoboticsRobots table for TagBasePath by hostname
+            Supports multiple sites with different tag hierarchies
+    
+    Args:
+        robot_hostname: Robot hostname from Orbit (e.g., 'spot-BD-12345678')
+        robot_nickname: Optional robot nickname (for demo mode formatting)
+    
+    Returns:
+        str: Full tag base path, or None if robot not found (database mode)
+    
+    Examples:
+        Demo mode: get_robot_tag_base("spot-BD-12345678", "Assembly Line Spot")
+            → "[default]Enterprise/Site001/Assembly/Line001/AssemblyLineSpot"
+        
+        Production mode: get_robot_tag_base("spot-BD-12345678")
+            → "[default]Enterprise/Site001/Assembly/Line001/Spot001" (from database)
+    """
+    logger = system.util.getLogger("helpers")
+    
+    if USE_DATABASE_FOR_TAG_PATHS:
+        # Production: Query database for TagBasePath
+        try:
+            result = system.db.runNamedQuery(
+                "Robotics/GetRobotTagPath",
+                {"hostname": robot_hostname}
+            )
+            
+            if result.getRowCount() > 0:
+                tag_path = result.getValueAt(0, "TagBasePath")
+                logger.debug("Retrieved tag path from database for {}: {}".format(
+                    robot_hostname, tag_path))
+                return tag_path
+            else:
+                logger.error("Robot not found in database: {}".format(robot_hostname))
+                return None
+        except Exception as e:
+            logger.error("Failed to query robot tag path: {}".format(str(e)))
+            return None
+    else:
+        # Demo: Use hardcoded TAG_BASE_PATH + device name
+        name_to_format = robot_nickname if robot_nickname else robot_hostname
+        device_name = hostname_to_tag_path(name_to_format)
+        tag_path = "{}/{}".format(TAG_BASE_PATH, device_name)
+        logger.debug("Using hardcoded tag path for {}: {}".format(
+            robot_hostname, tag_path))
+        return tag_path
 
 def get_site_config(site_id=1):
     """
@@ -1063,6 +1196,9 @@ This all-in-one version is provided as a simpler alternative for quick demos.
 # Configuration - In production, read from database or secure tags
 ORBIT_BASE_URL = "https://orbit.demo.local"
 ORBIT_API_TOKEN = "your-api-token-here"
+
+# IMPORTANT: Change this to match your actual tag provider and path
+# Example: "[default]YourProvider/YourSite/YourArea/YourLine"
 SITE_TAG_BASE = "[default]Enterprise/Site001/Assembly/Line001"
 
 def poll_robots():
@@ -1302,9 +1438,11 @@ def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     """Update mission-related tags for the robot."""
     logger = system.util.getLogger("orbit.webhook.tags")
     
-    # Convert hostname to tag path using helper module
-    device_name = helpers.hostname_to_tag_path(robot_hostname)
-    tag_base = "[default]Enterprise/Site001/Assembly/Line001/{}".format(device_name)
+    # Get tag base path using helper (supports both demo and production modes)
+    tag_base = helpers.get_robot_tag_base(robot_hostname)
+    if not tag_base:
+        logger.error("Cannot update tags: tag path not found for robot {}".format(robot_hostname))
+        return
     
     tags = [
         "{}/MissionId".format(tag_base),
@@ -1319,8 +1457,8 @@ def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     
     # Check for write errors
     for i, result in enumerate(results):
-        if result.quality.name != "Good":
-            logger.warn("Failed to write {}: {}".format(tags[i], result.quality))
+        if not result.isGood():
+            logger.error("Failed to write {}: {}".format(tags[i], result.getName()))
 ```
 
 ### 6.10 Project Library: notification_engine Module
@@ -1512,6 +1650,7 @@ def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body
 | `GetRunNotificationContext` | Query | Data used for notification templates | `:run_uuid` (String) |
 | `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, etc. |
 | `GetRobotByHostname` | Query | Find robot by hostname | `:hostname` |
+| `GetRobotTagPath` | Query | Get robot's tag base path (for production/multi-site) | `:hostname` |
 | `GetSiteConfig` | Query | Get site configuration | `:site_id` |
 | `InsertNotificationHistory` | Update | Log sent notification | Multiple parameters |
 
@@ -1567,6 +1706,37 @@ WHERE r.Hostname = :hostname
   AND r.IsActive = 1
 ORDER BY r.RobotId DESC;
 ```
+
+#### GetRobotTagPath
+
+**Type:** Query  
+**Database:** MSSQL_Robotics  
+**Caching:** None  
+**Purpose:** Used in production/multi-site mode to retrieve robot's tag base path from database
+
+**Parameters:**
+| Name | Type | Default |
+|------|------|---------|
+| hostname | String | (required) |
+
+**Usage:** Called by `helpers.get_robot_tag_base()` when `USE_DATABASE_FOR_TAG_PATHS = True`
+
+```sql
+-- Named Query: Robotics/GetRobotTagPath
+-- Returns the full tag base path for a robot
+-- Used when scaling to multiple sites with different tag hierarchies
+SELECT TOP 1
+    r.TagBasePath
+FROM RoboticsRobots r
+WHERE r.Hostname = :hostname
+  AND r.IsActive = 1
+ORDER BY r.RobotId DESC;
+```
+
+**Example Return:**
+| TagBasePath |
+|-------------|
+| `[default]Enterprise/Site001/Assembly/Line001/Spot001` |
 
 #### GetSiteConfig
 
@@ -1959,7 +2129,7 @@ flowchart TB
   - [ ] `robot_polling` - Polling logic
   - [ ] `webhook_handlers` - Webhook processing
   - [ ] `notification_engine` - Notification logic
-  - [ ] `helpers` - Utility functions
+  - [ ] `helpers` - Utility functions (⚠️ **Configure `TAG_BASE_PATH` to match your environment!**)
 - [ ] **Save project** (Project Library not accessible until saved!)
 - [ ] Test modules in Script Console: `orbit_api.get_robots()`
 
@@ -2082,5 +2252,5 @@ flowchart TB
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.6 (Demo MVP) - Added filter for invalid robot list*  
+*Version: 1.7 (Demo MVP) - Centralized tag path configuration with migration strategy , and also fixed bug in quality code methods*
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
