@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.8 (Demo) - Hostname-based tag naming for production consistency  
+**Version:** 1.9 (Demo) - Orbit API limitations documented, Spot SDK alternative added  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **1.9** | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference |
 | **1.8** | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API |
 | **1.7** | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic |
 | **1.6** | 2026-02-02 | Added robot validation filter for invalid/empty robots from Orbit API |
@@ -2265,6 +2266,7 @@ flowchart TB
 |------|----------------|-------------------|
 | **Sites** | 1 site | Multi-site with site selector |
 | **Robots** | 1-2 robots | N robots per site |
+| **Robot Telemetry** | Not available (Orbit limitation) | Spot SDK middleware for battery/pose/state (See Section 11.2) |
 | **History** | Memory tags only | Tag Historian + Store & Forward |
 | **Alarms** | None | Alarm pipeline (battery low, comm lost) |
 | **Notifications** | Email only | SMS, Push, Teams/Slack webhooks |
@@ -2277,18 +2279,283 @@ flowchart TB
 
 ## 11. Orbit API Reference (Used Endpoints)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v0/robots` | GET | Poll robot status (battery, pose, connection) |
-| `/api/v0/runs` | GET | Query run history (optional backup polling) |
-| `/api/v0/webhooks` | POST | Register Ignition webhook endpoint |
+> **⚠️ Important Limitation Discovered (2026-02-02):**
+> The Orbit API `/api/v0/robots` endpoint only returns **configuration data** (hostname, nickname, robotIndex, username), **NOT real-time telemetry** (battery, pose, connection status). See Section 11.1 for details and Section 11.2 for the alternative solution.
 
-**Webhook Events Used:**
-- `run.started` - Mission started
-- `run.completed` - Mission completed successfully
-- `run.failed` - Mission failed
+| Endpoint | Method | Actual Data Provided |
+|----------|--------|----------------------|
+| `/api/v0/robots` | GET | Robot configuration only (hostname, nickname, robotIndex) |
+| `/api/v0/runs` | GET | Mission run history (status, times, robot info) |
+| `/api/v0/run_events` | GET | Action events within runs |
+| `/api/v0/anomalies` | GET | Detected anomalies/alerts |
+| `/api/v0/webhooks` | POST | Register webhook endpoints |
+
+**Webhook Events:** Event types are not documented in the official API. Empirical testing required to discover available events.
+
+### 11.1 Orbit API Limitation Details
+
+Based on official Orbit API v5.0.0 documentation review:
+
+**What Orbit API DOES Provide:**
+
+| Data | Endpoint | Available Fields |
+|------|----------|------------------|
+| Robot Config | `/robots` | hostname, nickname, robotIndex, username |
+| Mission Runs | `/runs` | uuid, missionName, missionStatus, startTime, endTime, robotHostname |
+| Run Events | `/run_events` | actionName, time, error, missionName |
+| Anomalies | `/anomalies` | uuid, severity, title, status, runUuid |
+
+**What Orbit API Does NOT Provide:**
+
+| Data | Status | Alternative |
+|------|--------|-------------|
+| Battery level | ❌ Not available | Spot SDK (Section 11.2) |
+| Robot pose (x, y, theta) | ❌ Not available | Spot SDK (Section 11.2) |
+| Connection status | ❌ Not available | Spot SDK (Section 11.2) |
+| Charging status | ❌ Not available | Spot SDK (Section 11.2) |
+| Robot operational state | ❌ Not available | Spot SDK (Section 11.2) |
+| Motor temperatures | ❌ Not available | Spot SDK (Section 11.2) |
+
+**Impact on Current Plan:**
+- The `robot_polling` module cannot retrieve real-time telemetry from Orbit
+- Polling tags (BatteryLevel, IsConnected, IsCharging, Pose) will remain at default values
+- Mission-related data via webhooks and `/runs` endpoint still works as designed
 
 ---
+
+### 11.2 Future Enhancement: Direct Spot SDK Integration (Plan B)
+
+> **Status:** Not implemented. Documented for future reference when real-time robot telemetry is required.
+
+If real-time robot telemetry (battery, pose, state) is needed, the solution is to connect directly to Spot robots using the Boston Dynamics Spot SDK.
+
+#### 11.2.1 Why Middleware is Required
+
+```
+┌─────────────────┐                              ┌─────────────────┐
+│    Ignition     │         ❌ INCOMPATIBLE       │   Spot Robot    │
+│                 │                              │                 │
+│  • Jython 2.7   │   Cannot run Python 3        │  • gRPC/Protobuf│
+│  • HTTP Client  │   Cannot use gRPC            │  • Python 3.7+  │
+│  • JSON only    │   No bosdyn-client library   │  • Spot SDK     │
+└─────────────────┘                              └─────────────────┘
+
+                    ✅ SOLUTION: Middleware Service
+
+┌─────────────────┐    HTTP/JSON    ┌─────────────────┐    gRPC    ┌─────────────────┐
+│    Ignition     │ ◄────────────►  │   Middleware    │ ◄────────► │   Spot Robot    │
+│                 │                 │   (Python 3)    │            │                 │
+└─────────────────┘                 └─────────────────┘            └─────────────────┘
+```
+
+**The Problem:**
+- Ignition runs Jython 2.7 (limited Python, no pip packages)
+- Spot SDK requires Python 3.7+ and uses gRPC (binary protocol)
+- Cannot install bosdyn-client in Ignition
+
+**The Solution:**
+- Python 3 microservice (Flask/FastAPI) that connects to Spot robots
+- Exposes REST API endpoints returning JSON
+- Ignition polls the middleware using `system.net.httpClient()`
+
+#### 11.2.2 Data Available via Spot SDK
+
+Based on official Boston Dynamics Spot SDK v5.1.0 (`robot_state.proto`):
+
+| Data | Proto Message | Fields |
+|------|---------------|--------|
+| **Battery** | `BatteryState` | `charge_percentage` (0-100%), `estimated_runtime`, `current` (amps), `voltage`, `temperatures[]`, `status` (CHARGING/DISCHARGING) |
+| **Power** | `PowerState` | `motor_power_state` (OFF/ON/POWERING_ON/ERROR), `shore_power_state`, `locomotion_charge_percentage` |
+| **Position** | `KinematicState` | `transforms_snapshot` (body frame pose), `velocity_of_body_in_odom` |
+| **E-Stop** | `EStopState` | `name`, `type` (HARDWARE/SOFTWARE), `state` (ESTOPPED/NOT_ESTOPPED) |
+| **Behavior** | `BehaviorState` | `state` (NOT_READY/TRANSITION/STANDING/STEPPING) |
+| **Faults** | `SystemFaultState` | `faults[]` with severity, error messages |
+| **Foot State** | `FootState` | Per-foot position and contact state |
+| **Motor Temps** | `SystemState` | `motor_temperatures[]` per motor |
+| **WiFi** | `CommsState` | WiFi mode (AP/Client), ESSID |
+
+**Official Documentation:**
+- Spot SDK: https://dev.bostondynamics.com/readme
+- Robot State Client: https://dev.bostondynamics.com/python/bosdyn-client/src/bosdyn/client/robot_state.html
+- Proto definitions: https://github.com/boston-dynamics/spot-sdk/blob/master/protos/bosdyn/api/robot_state.proto
+
+#### 11.2.3 Recommended Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              Network Architecture                           │
+│                                                                             │
+│  ┌────────────────┐                                                         │
+│  │    Ignition    │◄──────────────────────────────────────────┐             │
+│  │    Gateway     │                                           │             │
+│  └───────┬────────┘                                           │             │
+│          │ HTTP :5000                                         │ Webhooks    │
+│          ▼                                                    │             │
+│  ┌────────────────┐     gRPC :443    ┌──────────┐             │             │
+│  │     Spot       │◄────────────────►│  Spot 1  │             │             │
+│  │   Middleware   │                  └──────────┘             │             │
+│  │  (Flask/Docker)│     gRPC :443    ┌──────────┐             │             │
+│  │                │◄────────────────►│  Spot 2  │             │             │
+│  └────────────────┘                  └──────────┘             │             │
+│                                                               │             │
+│  ┌────────────────┐                                           │             │
+│  │     Orbit      │───────────────────────────────────────────┘             │
+│  │    Server      │  (Mission events remain via Orbit webhooks)             │
+│  └────────────────┘                                                         │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Hybrid Data Flow:**
+
+| Data Type | Source | Method | Update Rate |
+|-----------|--------|--------|-------------|
+| Battery, Pose, State | Spot Middleware | Ignition polls REST | Every 5-15s |
+| Mission Events | Orbit Server | Webhook push | Real-time |
+| Mission History | Orbit `/runs` | Ignition polls REST | Every 60s |
+| Anomalies | Orbit `/anomalies` | Ignition polls REST | Every 60s |
+
+#### 11.2.4 Middleware Implementation Outline
+
+**Requirements:**
+```txt
+# requirements.txt
+flask==3.0.0
+bosdyn-client==4.0.0
+bosdyn-mission==4.0.0
+```
+
+**Example Flask Service:**
+```python
+# spot_middleware.py
+from flask import Flask, jsonify
+from bosdyn.client import create_standard_sdk
+from bosdyn.client.robot_state import RobotStateClient
+
+app = Flask(__name__)
+
+ROBOTS = {
+    "spot-BD-12345678": {"ip": "192.168.80.3", "username": "admin", "password": "xxx"}
+}
+
+@app.route('/robots/<hostname>/state', methods=['GET'])
+def get_robot_state(hostname):
+    """Get current state of a specific robot."""
+    config = ROBOTS.get(hostname)
+    if not config:
+        return jsonify({"error": "Robot not found"}), 404
+    
+    try:
+        sdk = create_standard_sdk('IgnitionMiddleware')
+        robot = sdk.create_robot(config["ip"])
+        robot.authenticate(config["username"], config["password"])
+        client = robot.ensure_client(RobotStateClient.default_service_name)
+        state = client.get_robot_state()
+        
+        battery = state.battery_states[0] if state.battery_states else None
+        power = state.power_state
+        
+        return jsonify({
+            "hostname": hostname,
+            "batteryLevel": battery.charge_percentage.value if battery else 0,
+            "isCharging": battery.status == 2 if battery else False,
+            "motorPowerState": power.motor_power_state,
+            "isConnected": True
+        })
+    except Exception as e:
+        return jsonify({"hostname": hostname, "isConnected": False, "error": str(e)})
+
+@app.route('/robots', methods=['GET'])
+def get_all_robots():
+    """Get state of all configured robots."""
+    return jsonify([get_robot_state(h).get_json() for h in ROBOTS.keys()])
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+```
+
+**Ignition Polling Script:**
+```python
+# Modified robot_polling module for middleware
+def poll_all_robots():
+    logger = system.util.getLogger("spot.polling")
+    
+    try:
+        # Call middleware instead of Orbit
+        response = system.net.httpClient().get("http://spot-middleware:5000/robots")
+        
+        if not response.good:
+            logger.error("Middleware error: {}".format(response.statusCode))
+            return
+        
+        for robot in response.json:
+            tag_base = helpers.get_robot_tag_base(robot["hostname"])
+            if not tag_base:
+                continue
+            
+            system.tag.writeBlocking([
+                tag_base + "/BatteryLevel",
+                tag_base + "/IsCharging",
+                tag_base + "/IsConnected",
+                tag_base + "/LastPollAtUtc"
+            ], [
+                robot.get("batteryLevel", 0),
+                robot.get("isCharging", False),
+                robot.get("isConnected", False),
+                system.date.now()
+            ])
+        
+        logger.info("Polled {} robots via middleware".format(len(response.json)))
+    except Exception as e:
+        logger.error("Middleware polling failed: {}".format(str(e)))
+```
+
+#### 11.2.5 Deployment Options
+
+| Option | Complexity | Notes |
+|--------|------------|-------|
+| **Python Script** | Low | Run directly on server with Python 3.7+ |
+| **Docker Container** | Low-Medium | Portable, easy deployment |
+| **Kubernetes** | Medium-High | For production scalability |
+| **Ignition Module** | High | Native integration (requires Java development) |
+
+**Docker Deployment:**
+```dockerfile
+FROM python:3.10-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY spot_middleware.py .
+EXPOSE 5000
+CMD ["python", "spot_middleware.py"]
+```
+
+```bash
+docker build -t spot-middleware .
+docker run -d -p 5000:5000 --name spot-middleware spot-middleware
+```
+
+#### 11.2.6 Prerequisites for Implementation
+
+- [ ] Network access from Ignition server to Spot robots (typically port 443)
+- [ ] Robot credentials (username/password) for each Spot robot
+- [ ] Python 3.7+ environment for middleware
+- [ ] Server/VM to host middleware service
+- [ ] Firewall rules allowing Ignition → Middleware → Robots
+
+#### 11.2.7 Decision Matrix
+
+| Requirement | Orbit Only | Orbit + Spot SDK |
+|-------------|------------|------------------|
+| Mission notifications | ✅ Yes | ✅ Yes |
+| Mission history | ✅ Yes | ✅ Yes |
+| Real-time battery | ❌ No | ✅ Yes |
+| Real-time pose | ❌ No | ✅ Yes |
+| Robot state (idle/moving) | ❌ No | ✅ Yes |
+| Setup complexity | Low | Medium |
+| Infrastructure | Ignition only | Ignition + Middleware |
+| Maintenance | Low | Medium |
+
+**Recommendation:** Start with Orbit-only approach for mission notifications. Add Spot SDK middleware when real-time telemetry becomes a requirement.
 
 ---
 
@@ -2308,5 +2575,5 @@ flowchart TB
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.8 (Demo MVP) - Hostname-based tag naming for production consistency*
+*Version: 1.9 (Demo MVP) - Orbit API limitations documented, Spot SDK alternative added*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
