@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.2 (Demo) - Fixed Notification Rules Schema Consistency  
+**Version:** 2.3 (Demo) - Notification Rules Scalability Design Documentation  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.3** | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems |
 | **2.2** | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping |
 | **2.1** | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12 |
 | **2.0** | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow |
@@ -1765,16 +1766,37 @@ def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
 
 **Location:** Designer > Project Browser > Scripting > Project Library > notification_engine
 
+**Implementation Note:** The code below uses the **Phase 2 approach** (processes all matching rules). For simpler deployments, you can modify to use only `rules[0]` (Phase 1 approach - see comments in code).
+
 ```python
 """
 Project Library: notification_engine
 Location: Designer > Project Browser > Scripting > Project Library
 Purpose: Notification rule evaluation and email sending
+
+Design: Processes all matching notification rules returned by GetNotificationRules.
+This enables different teams to receive different messages for the same event.
+
+Scaling Options:
+  - Phase 1 (Simple): Process only rules[0] - highest priority rule fires
+  - Phase 2 (Multi-Team): Process all rules - multiple teams get different messages
+  - Phase 3 (Enterprise): Add deduplication, multi-channel routing, etc.
 """
 
 def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_hostname):
     """
     Evaluate notification rules and send matching emails.
+    
+    Current Implementation: Phase 2 (All Rules)
+    - Loops through all matching rules
+    - Each matching rule sends a separate notification
+    - Different teams can receive different messages
+    
+    To switch to Phase 1 (Simple):
+      Change: for rule in rules:
+      To:     if rules and len(rules) > 0:
+              rule = rules[0]  # Use only highest priority rule
+              ... process single rule ...
     
     Args:
         trigger_type: Event type (RUN_START, RUN_COMP, RUN_FAIL)
@@ -1804,11 +1826,14 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
         logger.warn("BatteryLevel read failed for {}: {}".format(run_uuid, str(e)))
     
     # Get matching rules using Named Query
+    # Returns all matching rules ordered by Priority ASC (highest priority first)
     rules = system.db.runNamedQuery(
         "GetNotificationRules",
         {"trigger_type_code": trigger_type, "status_code": status_code}
     )
     
+    # Phase 2: Process ALL matching rules
+    # For Phase 1 (simple): Replace loop with: if rules and len(rules) > 0: rule = rules[0]
     for rule in rules:
         rule_id = rule["NotificationRuleId"]
         pattern = rule["MissionNamePattern"]
@@ -1921,6 +1946,86 @@ def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body
         system.util.getLogger("orbit.notification.log").error(
             "Failed to log notification: {}".format(str(e))
         )
+```
+
+#### Notification Engine Scaling Guide
+
+**Current Implementation:** The code above uses **Phase 2** (processes all matching rules).
+
+**When to Use Each Approach:**
+
+| Phase | When To Use | Complexity | Flexibility |
+|-------|-------------|------------|-------------|
+| **Phase 1: Simple** | 1-5 robots, small team, everyone sees same alerts | ⭐ Low | ⭐ Limited |
+| **Phase 2: Multi-Team** | 10+ robots, multiple teams need different alerts | ⭐⭐ Medium | ⭐⭐⭐ Good |
+| **Phase 3: Enterprise** | Multi-site, complex routing, integrations | ⭐⭐⭐ High | ⭐⭐⭐⭐⭐ Maximum |
+
+**Phase 1 Example (Simplified):**
+
+```python
+# Replace the "for rule in rules:" loop in evaluate_and_send() with:
+
+if not rules or len(rules) == 0:
+    logger.info("No notification rules matched for {}".format(trigger_type))
+    return
+
+# Use only highest priority rule (first in ordered result)
+rule = rules[0]
+rule_id = rule["NotificationRuleId"]
+pattern = rule["MissionNamePattern"]
+
+# Check mission name pattern match
+if pattern and pattern.replace("%", "") not in mission_name:
+    logger.info("Mission name '{}' does not match pattern '{}'".format(mission_name, pattern))
+    return
+
+# Get recipients and send (rest of logic stays the same)
+recipients = system.db.runNamedQuery("GetNotificationRecipients", {"rule_id": rule_id})
+# ... continue with email sending ...
+```
+
+**Phase 3 Considerations (Future Enhancement):**
+
+When scaling to enterprise needs, consider adding:
+
+1. **Deduplication by recipient:**
+```python
+# Track which recipients already received a notification
+recipient_to_rule = {}  # email -> highest priority rule
+for rule in rules:
+    recipients = system.db.runNamedQuery("GetNotificationRecipients", {"rule_id": rule["NotificationRuleId"]})
+    for recipient in recipients:
+        email = recipient["Email"]
+        if email not in recipient_to_rule:
+            recipient_to_rule[email] = (rule, recipient)  # First match wins (highest priority)
+
+# Send one email per unique recipient
+for email, (rule, recipient) in recipient_to_rule.items():
+    # ... send notification ...
+```
+
+2. **Multi-channel routing:**
+```python
+# Support different notification channels
+if rule["ChannelType"] == "email":
+    send_email(...)
+elif rule["ChannelType"] == "sms":
+    send_sms(...)
+elif rule["ChannelType"] == "webhook":
+    trigger_webhook(...)  # e.g., create Jira ticket
+```
+
+3. **Site-specific filtering:**
+```python
+# Add site_id parameter to GetNotificationRules query:
+rules = system.db.runNamedQuery(
+    "GetNotificationRules",
+    {
+        "trigger_type_code": trigger_type,
+        "status_code": status_code,
+        "site_id": site_id  # Filter rules by site
+    }
+)
 ```
 
 ### 6.11 Testing the Webhook Implementation
@@ -2428,7 +2533,7 @@ performance_test(20)
 |------------|------|-------------|------------|
 | `GetAllRobots` | Query | Get all active robots | `:site_id` (Int) |
 | `GetMissionHistory` | Query | Get mission history with filters | `:site_id`, `:start_date`, `:end_date`, `:limit` |
-| `GetNotificationRules` | Query | Get active notification rules | `:trigger_type_code`, `:status_code` |
+| `GetNotificationRules` | Query | Get active notification rules (returns ALL matching, ordered by priority) | `:trigger_type_code`, `:status_code` |
 | `GetNotificationRecipients` | Query | Get recipients for a rule | `:rule_id` (Int) |
 | `GetRunNotificationContext` | Query | Data used for notification templates | `:run_uuid` (String) |
 | `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, `:robot_hostname` |
@@ -2563,6 +2668,8 @@ ORDER BY s.SiteId DESC;
 
 ```sql
 -- Named Query: GetNotificationRules
+-- Design: Returns ALL matching rules ordered by priority (no TOP 1)
+-- Python code decides how many rules to process (flexible scaling)
 SELECT
     nr.NotificationRuleId,
     nr.SiteId,
@@ -2580,17 +2687,49 @@ WHERE nr.IsActive = 1
 ORDER BY nr.Priority ASC, nr.NotificationRuleId ASC;
 ```
 
+**Design Philosophy:**
+
+This query intentionally returns **all matching rules** (no `TOP 1` limit) to enable flexible scaling:
+
+- **Phase 1 (Simple):** Python uses only `rules[0]` (highest priority rule)
+  - One notification per event
+  - Easy to understand and debug
+  - Good for small teams where everyone sees everything
+
+- **Phase 2 (Multi-Team):** Python loops through all rules with deduplication
+  - Different teams get different messages for same event
+  - No duplicate emails to same person
+  - Each recipient gets notification from their highest-priority matching rule
+
+- **Phase 3 (Enterprise):** Multi-channel routing (email, SMS, webhooks)
+  - Integration with ticketing systems
+  - Site-specific routing
+  - Complex escalation workflows
+
+**Why not use `TOP 1` in SQL?**
+- Changing notification behavior only requires Python code updates (easy)
+- No database schema or query changes needed when scaling (hard)
+- Query stays flexible for future requirements
+- Ordered by Priority ASC ensures highest-priority rules come first
+
 **Filtering Logic:**
 - **`TriggerTypeCode`**: Exact match (e.g., `RUN_START`, `RUN_COMP`, `RUN_FAIL`)
 - **`StatusCodeFilter`**: `NULL` = match all statuses, or exact match required (e.g., `FAIL`, `COMP`)
+  - Rules with `NULL` act as catch-all rules
+  - Specific status rules are more targeted
+  - Multiple rules can match (e.g., Rule 3: NULL + Rule 7: 'FAIL')
 - **`MissionNamePattern`**: Checked in Python code using LIKE-style matching (evaluated after query returns)
   - `NULL` = match all missions
   - Pattern like `%Patrol%` = match missions containing "Patrol"
 
-**Example:** For a failed patrol mission:
+**Example:** For a failed patrol mission with status='FAIL':
 - Orbit sends: `status="FAIL"`, `mission="Patrol-North"`
-- Query returns all rules with `TriggerTypeCode=RUN_FAIL` AND (`StatusCodeFilter=NULL` OR `StatusCodeFilter=FAIL`)
-- Python filters by: `MissionNamePattern=NULL` (all missions) OR `MissionNamePattern=%Patrol%` (contains "Patrol")
+- Query returns multiple rules (ordered by priority):
+  - Rule 7 (Priority=1): Specific patrol failures → `patrol-team@company.com`
+  - Rule 3 (Priority=99): All failures catch-all → `operations@company.com`
+- Python decides how to handle multiple matches:
+  - Simple: Use only Rule 7 (first/highest priority)
+  - Advanced: Send both, but deduplicate if same recipient
 
 #### GetRunNotificationContext
 
@@ -3346,5 +3485,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.2 (Demo MVP) - Fixed Notification Rules Schema Consistency*  
+*Version: 2.3 (Demo MVP) - Notification Rules Scalability Design Documentation*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
