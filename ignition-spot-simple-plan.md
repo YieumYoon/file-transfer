@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.9 (Demo) - Orbit API limitations documented, Spot SDK alternative added  
+**Version:** 2.0 (Demo) - Simplified for actual Orbit API capabilities  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.0** | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow |
 | **1.9** | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference |
 | **1.8** | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API |
 | **1.7** | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic |
@@ -772,6 +773,8 @@ Project: SpotOrbitIntegration
 
 > **Reference:** [User Defined Types - UDTs](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts), [UDT Parameters](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts/udt-parameters)
 
+> **⚠️ Important (v1.9):** The UDT is designed for mission-focused data from Orbit API. Real-time telemetry (battery, pose, state) is NOT available from Orbit - see Section 11.2 for future Spot SDK integration.
+
 **Location:** Designer > Tag Browser > Tag Provider > _types_ > SpotRobot
 
 ```
@@ -779,34 +782,49 @@ SpotRobot (UDT Definition)
 │
 ├── [Parameters] ← Configure per instance, referenced in member tags
 │   ├── RobotHostname       : String   -- e.g., "spot-BD-12345678" (must match Orbit exactly)
-│   ├── SiteId              : Int      -- FK to Sites table
-│   └── PollEnabled         : Boolean  -- Enable/disable polling for this robot
+│   └── SiteId              : Int      -- FK to Sites table
 │
 ├── [Pre-defined Parameters Available] ← Built-in, no configuration needed
 │   ├── {InstanceName}      -- Name of this UDT instance (e.g., "spot-BD-12345678")
 │   ├── {PathToParentFolder}-- Full path to containing folder
 │   └── {TagName}           -- Name of the specific tag using this parameter
 │
-├── [Polled Tags] ← Updated by Gateway Timer Script
-│   ├── BatteryLevel        : Float    -- 0-100%
-│   ├── IsConnected         : Boolean
-│   ├── IsCharging          : Boolean
-│   ├── RobotStateCode      : String   -- e.g., "idle", "running"
-│   └── Pose/
-│       ├── X               : Float    -- meters
-│       ├── Y               : Float    -- meters
-│       └── Theta           : Float    -- radians
+├── [Mission Tags] ← Updated by Webhook and/or Runs Polling
+│   ├── MissionId           : String   -- Current/last mission UUID
+│   ├── MissionName         : String   -- Mission name
+│   ├── MissionStatusCode   : String   -- Mission status (see below)
+│   ├── MissionStartTime    : DateTime -- When mission started
+│   ├── MissionEndTime      : DateTime -- When mission ended (null if running)
+│   └── LastRunAtUtc        : DateTime -- Last mission activity timestamp
 │
-├── [Webhook Tags] ← Updated by Web Dev endpoint
-│   ├── MissionId           : String
-│   ├── MissionName         : String
-│   ├── MissionStatusCode   : String   -- PEND, RUN, COMP, FAIL
-│   └── LastRunAtUtc        : DateTime
+├── [Robot Config Tags] ← Updated by Runs Polling (from Orbit /robots)
+│   ├── Nickname            : String   -- Robot display name from Orbit
+│   └── RobotIndex          : Int      -- Orbit slot number (0-32)
+│
+├── [Future: Telemetry Tags] ← NOT available from Orbit API
+│   │                          Requires Spot SDK middleware (See Section 11.2)
+│   ├── BatteryLevel        : Float    -- 0-100% (default: 0, placeholder)
+│   ├── IsConnected         : Boolean  -- (default: false, placeholder)
+│   ├── IsCharging          : Boolean  -- (default: false, placeholder)
+│   ├── RobotStateCode      : String   -- (default: "unknown", placeholder)
+│   └── Pose/
+│       ├── X               : Float    -- (default: 0, placeholder)
+│       ├── Y               : Float    -- (default: 0, placeholder)
+│       └── Theta           : Float    -- (default: 0, placeholder)
 │
 └── [System Tags]
-    ├── LastPollAtUtc       : DateTime
-    └── PollErrorCount      : Int
+    ├── LastPollAtUtc       : DateTime -- Last successful poll timestamp
+    └── PollErrorCount      : Int      -- Consecutive poll error count
 ```
+
+**Mission Status Codes:**
+
+| Code | Description | Source |
+|------|-------------|--------|
+| `IDLE` | No active mission | Default state |
+| `RUNNING` | Mission in progress | Webhook `run.started` or `/runs` poll |
+| `COMPLETED` | Mission finished successfully | Webhook `run.completed` or `/runs` poll |
+| `FAILED` | Mission failed | Webhook `run.failed` or `/runs` poll |
 
 **UDT Instance Example (Hostname-Based Naming):**
 ```
@@ -814,10 +832,12 @@ SpotRobot (UDT Definition)
     Parameters:
         RobotHostname = "spot-BD-12345678"   ← Must match Orbit hostname exactly
         SiteId = 1
-        PollEnabled = true
 
 Note: Instance name uses the hostname for consistency with Orbit API.
       Display "Assembly Line Spot" nickname in UI using the Nickname database field.
+      
+      Telemetry tags (Battery, Pose, etc.) are placeholders for future Spot SDK integration.
+      They will show default values until Section 11.2 middleware is implemented.
 ```
 
 ### 6.3 Project Library: orbit_api Module
@@ -828,19 +848,42 @@ Note: Instance name uses the hostname for consistency with Orbit API.
 
 **Important:** `httpClient` instances are **heavyweight** objects. Per Ignition documentation: *"httpClient instances are heavyweight, so they should be created sparingly and reused as much as possible. For ease of reuse, consider instantiating a new httpClient as a top-level variable in a project library script."*
 
+> **⚠️ API Limitation (v1.9):** The Orbit API provides **configuration and mission data only**. It does NOT provide real-time telemetry (battery, pose, state). See Section 11.1 for details.
+
+**Available Endpoints:**
+
+| Function | Endpoint | Data Returned |
+|----------|----------|---------------|
+| `get_robots()` | `/api/v0/robots` | Robot config: hostname, nickname, robotIndex, username |
+| `get_runs()` | `/api/v0/runs` | Mission runs: uuid, missionName, status, times, robot info |
+| `get_anomalies()` | `/api/v0/anomalies` | Anomalies: uuid, severity, title, status, timestamps |
+
 **Robot Validation Strategy:** The Orbit API may return robots with empty or invalid data (e.g., empty hostname, null values). This module implements a **defense-in-depth approach**:
 
 1. **Primary Filtering** (`_is_valid_robot()`): Validates and filters robots at the API level before returning them
-2. **Secondary Validation** (in `robot_polling.poll_all_robots()`): Additional checks when processing robots
-3. **Logging**: Invalid robots are logged with warnings for debugging and audit purposes
-
-This ensures that only valid robots with required fields (hostname, robotIndex) are processed by the polling logic.
+2. **Secondary Validation** (in `runs_polling.poll_recent_runs()`): Additional checks when processing data
+3. **Logging**: Invalid data is logged with warnings for debugging and audit purposes
 
 ```python
 """
 Project Library: orbit_api
 Location: Designer > Project Browser > Scripting > Project Library
 Purpose: Orbit API client with reusable httpClient instance
+
+IMPORTANT: Orbit API provides configuration and mission data only.
+           Real-time telemetry (battery, pose, state) requires Spot SDK.
+           See Section 11.2 for future Spot SDK integration.
+
+Available Data from Orbit:
+    - /robots: hostname, nickname, robotIndex, username (CONFIG ONLY)
+    - /runs: mission run history with status, times, robot info
+    - /anomalies: detected anomalies/alerts from missions
+    
+NOT Available from Orbit:
+    - Battery level, charging status
+    - Robot pose (x, y, theta)
+    - Connection status
+    - Robot operational state
 """
 
 # ==============================================================================
@@ -870,11 +913,18 @@ def _get_config():
 
 def get_robots():
     """
-    GET /api/v0/robots - Fetch all robots from Orbit API.
-    Filters out invalid robots with empty/null required fields.
+    GET /api/v0/robots - Fetch robot CONFIGURATION from Orbit API.
+    
+    IMPORTANT: This returns configuration data only, NOT real-time telemetry.
     
     Returns:
-        list: List of valid robot dictionaries, or empty list on error
+        list: List of robot config dictionaries with fields:
+            - hostname (str): Robot hostname, e.g., "spot-BD-12345678"
+            - nickname (str): Display name
+            - robotIndex (int): Orbit slot number (0-32)
+            - username (str): Connection username
+            
+    Does NOT return: battery, pose, connection status, charging status, state
     """
     logger = system.util.getLogger("orbit.api.robots")
     config = _get_config()
@@ -934,24 +984,39 @@ def _is_valid_robot(robot):
     
     return True
 
-def get_runs(limit=100, status=None):
+def get_runs(limit=100, robot_hostname=None, start_time=None):
     """
     GET /api/v0/runs - Fetch mission runs from Orbit API.
     
+    This is the PRIMARY source of mission activity data.
+    
     Args:
-        limit: Maximum number of runs to fetch
-        status: Optional status filter (started, completed, failed)
+        limit: Maximum number of runs to fetch (default 100)
+        robot_hostname: Optional filter by robot hostname
+        start_time: Optional ISO timestamp to filter runs after this time
     
     Returns:
-        list: List of run dictionaries, or empty list on error
+        list: List of run dictionaries with fields:
+            - uuid (str): Run unique identifier
+            - missionName (str): Mission name
+            - missionStatus (str): Status of the mission
+            - startTime (str): ISO timestamp when run started
+            - endTime (str): ISO timestamp when run ended (null if running)
+            - robotHostname (str): Robot that executed the run
+            - robotNickname (str): Robot display name
+            - robotSerial (str): Robot serial number
+            - runType (str): "mission" or "teleop"
+            - actionCount (int): Number of actions in run
     """
     logger = system.util.getLogger("orbit.api.runs")
     config = _get_config()
     client = _get_client()
     
     params = {"limit": limit}
-    if status:
-        params["status"] = status
+    if robot_hostname:
+        params["robotHostname"] = robot_hostname
+    if start_time:
+        params["startTime"] = start_time
     
     try:
         response = client.get(
@@ -961,7 +1026,62 @@ def get_runs(limit=100, status=None):
         )
         
         if response.good:
-            return response.json
+            # Orbit returns {"resources": [...]} for runs endpoint
+            data = response.json
+            runs = data.get("resources", data) if isinstance(data, dict) else data
+            logger.debug("Fetched {} runs".format(len(runs) if runs else 0))
+            return runs if runs else []
+        else:
+            logger.error("API error: {} - {}".format(response.statusCode, response.text))
+            return []
+            
+    except Exception as e:
+        logger.error("Request failed: {}".format(str(e)))
+        return []
+
+def get_anomalies(limit=100, status=None, start_time=None):
+    """
+    GET /api/v0/anomalies - Fetch anomalies/alerts from Orbit API.
+    
+    Anomalies are issues detected during mission execution.
+    
+    Args:
+        limit: Maximum number of anomalies to fetch
+        status: Optional filter by status ("open" or "closed")
+        start_time: Optional ISO timestamp to filter anomalies after this time
+    
+    Returns:
+        list: List of anomaly dictionaries with fields:
+            - uuid (str): Anomaly unique identifier
+            - time (str): ISO timestamp when detected
+            - severity (int): Severity level
+            - title (str): Anomaly title/description
+            - status (str): "open" or "closed"
+            - runUuid (str): Associated run UUID
+            - elementId (str): Site element that triggered anomaly
+    """
+    logger = system.util.getLogger("orbit.api.anomalies")
+    config = _get_config()
+    client = _get_client()
+    
+    params = {"limit": limit}
+    if status:
+        params["status"] = status
+    if start_time:
+        params["startTime"] = start_time
+    
+    try:
+        response = client.get(
+            url=config["base_url"] + "/api/v0/anomalies",
+            headers={"Authorization": "Bearer " + config["api_token"]},
+            params=params
+        )
+        
+        if response.good:
+            data = response.json
+            anomalies = data.get("resources", data) if isinstance(data, dict) else data
+            logger.debug("Fetched {} anomalies".format(len(anomalies) if anomalies else 0))
+            return anomalies if anomalies else []
         else:
             logger.error("API error: {} - {}".format(response.statusCode, response.text))
             return []
@@ -971,100 +1091,243 @@ def get_runs(limit=100, status=None):
         return []
 ```
 
-### 6.4 Project Library: robot_polling Module
+### 6.4 Project Library: runs_polling Module
 
-**Location:** Designer > Project Browser > Scripting > Project Library > robot_polling
+> **Note (v1.9):** This module was renamed from `robot_polling` to `runs_polling` to reflect its actual purpose. It polls mission runs data, not robot telemetry.
+
+**Location:** Designer > Project Browser > Scripting > Project Library > runs_polling
+
+**Purpose:** Poll the Orbit `/runs` endpoint to update mission status tags. This serves as a backup to webhooks and ensures tags stay synchronized even if webhooks are missed.
 
 ```python
 """
-Project Library: robot_polling
+Project Library: runs_polling
 Location: Designer > Project Browser > Scripting > Project Library
-Purpose: Robot polling logic - called by Gateway Timer Script
+Purpose: Poll Orbit /runs endpoint to update mission status tags
+
+This module serves as:
+1. Backup to webhooks - ensures tags update even if webhook fails
+2. Initial sync - populates tags when system starts
+3. Historical sync - can fetch older runs for reporting
+
+Note: Real-time telemetry (battery, pose, state) is NOT available from Orbit.
+      See Section 11.2 for future Spot SDK integration if telemetry is needed.
 """
 
-def poll_all_robots():
+# Track last poll time to fetch only new runs
+_last_poll_time = None
+
+def poll_recent_runs():
     """
     Main polling function - called by Gateway Timer Script.
-    Fetches all robots from Orbit API and updates UDT tags.
-    Includes validation to skip robots with empty/invalid data.
+    Fetches recent mission runs from Orbit API and updates UDT mission tags.
+    
+    This provides:
+    - Mission status updates (started, completed, failed)
+    - Mission timing information (start/end times)
+    - Robot-to-mission association
+    
+    This does NOT provide (Orbit API limitation):
+    - Battery level
+    - Robot pose/position
+    - Connection status
+    - Charging status
     """
-    logger = system.util.getLogger("orbit.polling")
+    global _last_poll_time
+    logger = system.util.getLogger("orbit.runs_polling")
     
     try:
-        # Use the shared orbit_api module (already filters invalid robots)
-        robots = orbit_api.get_robots()
+        # Fetch recent runs (last 60 seconds or since last poll)
+        runs = orbit_api.get_runs(limit=50)
         
-        if not robots:
-            logger.warn("No robots returned from API")
+        if not runs:
+            logger.debug("No runs returned from API")
             return
         
-        # Process each robot with additional validation (defense in depth)
-        processed_count = 0
-        for robot in robots:
-            # Secondary validation: skip robots with empty hostname
-            hostname = robot.get("hostname", "")
+        # Group runs by robot hostname to get latest run per robot
+        latest_runs_by_robot = {}
+        for run in runs:
+            hostname = run.get("robotHostname", "")
             if not hostname:
-                logger.warn("Skipping robot with empty hostname: {}".format(robot))
                 continue
             
-            _update_robot_tags(robot)
-            processed_count += 1
+            # Keep only the most recent run per robot
+            existing = latest_runs_by_robot.get(hostname)
+            if not existing:
+                latest_runs_by_robot[hostname] = run
+            else:
+                # Compare start times to keep the most recent
+                run_start = run.get("startTime", "")
+                existing_start = existing.get("startTime", "")
+                if run_start > existing_start:
+                    latest_runs_by_robot[hostname] = run
         
-        logger.info("Polled {} valid robots successfully (out of {} total)".format(
-            processed_count, len(robots)))
+        # Update tags for each robot's latest run
+        updated_count = 0
+        for hostname, run in latest_runs_by_robot.items():
+            if _update_mission_tags(hostname, run):
+                updated_count += 1
+        
+        _last_poll_time = system.date.now()
+        logger.info("Updated mission tags for {} robots".format(updated_count))
         
     except Exception as e:
-        logger.error("Polling failed: {}".format(str(e)))
+        logger.error("Runs polling failed: {}".format(str(e)))
 
-def _update_robot_tags(robot_data):
+def _update_mission_tags(hostname, run_data):
     """
-    Update tags for a single robot.
+    Update mission-related tags for a single robot.
     
     Args:
-        robot_data: Dictionary from Orbit API /robots endpoint
+        hostname: Robot hostname from Orbit
+        run_data: Run dictionary from Orbit API /runs endpoint
+        
+    Returns:
+        bool: True if tags were updated, False otherwise
     """
-    logger = system.util.getLogger("orbit.polling.tags")
+    logger = system.util.getLogger("orbit.runs_polling.tags")
     
-    hostname = robot_data.get("hostname", "")
-    nickname = robot_data.get("nickname", hostname)
-    
-    # Get tag base path using helper (supports both demo and production modes)
-    tag_base = helpers.get_robot_tag_base(hostname, nickname)
+    # Get tag base path using helper
+    tag_base = helpers.get_robot_tag_base(hostname)
     if not tag_base:
-        logger.error("Cannot update tags: tag path not found for robot {}".format(hostname))
-        return
+        logger.warn("Tag path not found for robot: {}".format(hostname))
+        return False
+    
+    # Extract run data
+    mission_id = run_data.get("uuid", "")
+    mission_name = run_data.get("missionName", "")
+    mission_status = _map_mission_status(run_data.get("missionStatus", ""))
+    start_time = _parse_iso_timestamp(run_data.get("startTime"))
+    end_time = _parse_iso_timestamp(run_data.get("endTime"))
+    nickname = run_data.get("robotNickname", hostname)
     
     # Prepare tag paths and values
     tags_to_write = [
-        "{}/BatteryLevel".format(tag_base),
-        "{}/IsConnected".format(tag_base),
-        "{}/IsCharging".format(tag_base),
-        "{}/RobotStateCode".format(tag_base),
-        "{}/Pose/X".format(tag_base),
-        "{}/Pose/Y".format(tag_base),
-        "{}/Pose/Theta".format(tag_base),
+        "{}/MissionId".format(tag_base),
+        "{}/MissionName".format(tag_base),
+        "{}/MissionStatusCode".format(tag_base),
+        "{}/MissionStartTime".format(tag_base),
+        "{}/MissionEndTime".format(tag_base),
+        "{}/LastRunAtUtc".format(tag_base),
+        "{}/Nickname".format(tag_base),
         "{}/LastPollAtUtc".format(tag_base),
     ]
     
-    pose = robot_data.get("pose", {})
     values = [
-        robot_data.get("batteryLevel", 0.0),
-        robot_data.get("isConnected", False),
-        robot_data.get("isCharging", False),
-        robot_data.get("state", "unknown"),
-        pose.get("x", 0.0),
-        pose.get("y", 0.0),
-        pose.get("theta", 0.0),
+        mission_id,
+        mission_name,
+        mission_status,
+        start_time,
+        end_time,
+        start_time if start_time else system.date.now(),  # Use start time as last activity
+        nickname,
         system.date.now(),
     ]
     
     # Write all tags in single blocking call
-    results = system.tag.writeBlocking(tags_to_write, values)
+    try:
+        results = system.tag.writeBlocking(tags_to_write, values)
+        
+        # Check for write errors
+        success = True
+        for i, result in enumerate(results):
+            if not result.isGood():
+                logger.error("Failed to write {}: {}".format(tags_to_write[i], result))
+                success = False
+        
+        return success
+    except Exception as e:
+        logger.error("Tag write failed for {}: {}".format(hostname, str(e)))
+        return False
+
+def _map_mission_status(orbit_status):
+    """
+    Map Orbit mission status to our status codes.
     
-    # Check for write errors
-    for i, result in enumerate(results):
-        if not result.isGood():
-            logger.error("Failed to write {}: {}".format(tags_to_write[i], result.getName()))
+    Args:
+        orbit_status: Status string from Orbit API
+        
+    Returns:
+        str: Standardized status code (IDLE, RUNNING, COMPLETED, FAILED)
+    """
+    if not orbit_status:
+        return "IDLE"
+    
+    status_lower = orbit_status.lower()
+    
+    if status_lower in ["running", "started", "in_progress"]:
+        return "RUNNING"
+    elif status_lower in ["completed", "success", "succeeded"]:
+        return "COMPLETED"
+    elif status_lower in ["failed", "error", "aborted", "cancelled"]:
+        return "FAILED"
+    else:
+        return "IDLE"
+
+def _parse_iso_timestamp(iso_string):
+    """
+    Parse ISO timestamp string to Java Date.
+    
+    Args:
+        iso_string: ISO 8601 timestamp string (e.g., "2026-02-02T10:30:00Z")
+        
+    Returns:
+        java.util.Date or None if parsing fails
+    """
+    if not iso_string:
+        return None
+    
+    try:
+        # Handle ISO format with timezone
+        # Remove 'Z' and replace with +00:00 for parsing
+        clean_string = iso_string.replace("Z", "+00:00")
+        # Remove microseconds if present (Jython limitation)
+        if "." in clean_string:
+            parts = clean_string.split(".")
+            clean_string = parts[0] + clean_string[clean_string.rfind("+"):]
+        
+        return system.date.parse(clean_string, "yyyy-MM-dd'T'HH:mm:ssXXX")
+    except:
+        # Fallback: try simpler format
+        try:
+            return system.date.parse(iso_string[:19], "yyyy-MM-dd'T'HH:mm:ss")
+        except:
+            return None
+
+def sync_robot_config():
+    """
+    One-time sync of robot configuration from Orbit.
+    Updates Nickname and RobotIndex tags from /robots endpoint.
+    
+    Call this on startup or when robots are added to Orbit.
+    """
+    logger = system.util.getLogger("orbit.runs_polling.config")
+    
+    try:
+        robots = orbit_api.get_robots()
+        
+        for robot in robots:
+            hostname = robot.get("hostname", "")
+            if not hostname:
+                continue
+            
+            tag_base = helpers.get_robot_tag_base(hostname)
+            if not tag_base:
+                continue
+            
+            # Update config tags
+            system.tag.writeBlocking([
+                "{}/Nickname".format(tag_base),
+                "{}/RobotIndex".format(tag_base),
+            ], [
+                robot.get("nickname", hostname),
+                robot.get("robotIndex", -1),
+            ])
+        
+        logger.info("Synced config for {} robots".format(len(robots)))
+        
+    except Exception as e:
+        logger.error("Robot config sync failed: {}".format(str(e)))
 ```
 
 ### 6.5 Project Library: helpers Module
@@ -1198,121 +1461,83 @@ def get_site_config(site_id=1):
     return None
 ```
 
-### 6.6 Gateway Timer Script: RobotPolling
+### 6.6 Gateway Timer Script: RunsPolling
 
 > **Reference:** [Gateway Event Scripts - Timer Script](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#timer-script)
 
+> **Note (v1.9):** Renamed from `RobotPolling` to `RunsPolling` to reflect actual purpose. This script polls mission runs, NOT robot telemetry (which is not available from Orbit API).
+
 **Location:** Designer > Project Browser > Scripting > Gateway Events > Timer Scripts  
-**Script Name:** `RobotPolling`  
+**Script Name:** `RunsPolling`  
 **Settings:**
-- **Delay:** 15000 (milliseconds)
+- **Delay:** 60000 (milliseconds) - 60 seconds is sufficient since webhooks provide real-time updates
 - **Delay Type:** Fixed Rate
 - **Enabled:** ✓
-- **Threading:** Shared (or Dedicated if polling takes >1 second)
+- **Threading:** Shared
+
+**Purpose:** Backup polling for mission status. Webhooks provide real-time updates, but this ensures tags stay synchronized if webhooks fail.
 
 ```python
 """
-Gateway Timer Script: RobotPolling
+Gateway Timer Script: RunsPolling
 Location: Designer > Scripting > Gateway Events > Timer Scripts
-Schedule: Fixed Rate, 15000ms
+Schedule: Fixed Rate, 60000ms (60 seconds)
 
-This script simply calls the Project Library module.
-All logic is in robot_polling module for reusability and testability.
+Purpose: Poll Orbit /runs endpoint to update mission status tags.
+         Serves as backup to webhooks for reliability.
+
+Note: This does NOT poll robot telemetry (battery, pose, state).
+      Orbit API does not provide real-time telemetry data.
+      See Section 11.2 for future Spot SDK integration if telemetry is needed.
 """
 
 # One-line executor - all logic in Project Library
-robot_polling.poll_all_robots()
+runs_polling.poll_recent_runs()
 ```
 
 **Testing:** Before enabling the timer, test in Script Console:
 ```python
 # Open: Designer > Tools > Script Console
-robot_polling.poll_all_robots()
+runs_polling.poll_recent_runs()
+
+# To sync robot configuration (nickname, robotIndex):
+runs_polling.sync_robot_config()
 ```
 
-### 6.7 Gateway Timer Script: Robot Polling (Alternative - All-in-One)
+### 6.7 Gateway Startup Script: Initial Sync
 
-**Alternative approach:** If you prefer simpler structure without Project Library modules, you can put all logic directly in the Gateway Timer Script. This is acceptable for smaller projects but reduces reusability and testability.
+> **Reference:** [Gateway Event Scripts - Startup Script](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#startup-script)
+
+**Location:** Designer > Project Browser > Scripting > Gateway Events > Startup  
+**Purpose:** Sync robot configuration on gateway startup.
 
 ```python
 """
-Gateway Timer Script: RobotPolling (All-in-One Alternative)
-Location: Designer > Scripting > Gateway Events > Timer Scripts
-Schedule: Fixed Rate, 15000ms
+Gateway Startup Script
+Location: Designer > Scripting > Gateway Events > Startup
 
-Note: The recommended approach is to use Project Library modules (see section 6.3-6.6).
-This all-in-one version is provided as a simpler alternative for quick demos.
+Purpose: Initialize robot configuration tags on gateway startup.
+         Syncs Nickname and RobotIndex from Orbit /robots endpoint.
 """
 
-# Configuration - In production, read from database or secure tags
-ORBIT_BASE_URL = "https://orbit.demo.local"
-ORBIT_API_TOKEN = "your-api-token-here"
-
-# IMPORTANT: Change this to match your actual tag provider and path
-# Example: "[default]YourProvider/YourSite/YourArea/YourLine"
-SITE_TAG_BASE = "[default]Enterprise/Site001/Assembly/Line001"
-
-def poll_robots():
-    """Poll all robots from Orbit API and update tags."""
-    logger = system.util.getLogger("orbit.polling")
+def initialize():
+    logger = system.util.getLogger("orbit.startup")
+    logger.info("Starting Orbit integration initialization...")
     
     try:
-        # Create httpClient (note: ideally reuse via Project Library)
-        client = system.net.httpClient(timeout=30000)
+        # Sync robot configuration from Orbit
+        runs_polling.sync_robot_config()
+        logger.info("Robot configuration synced successfully")
         
-        # Call Orbit API: GET /api/v0/robots
-        response = client.get(
-            url=ORBIT_BASE_URL + "/api/v0/robots",
-            headers={"Authorization": "Bearer " + ORBIT_API_TOKEN}
-        )
-        
-        if not response.good:
-            logger.error("API error: {}".format(response.statusCode))
-            return
-        
-        robots = response.json
-        
-        for robot in robots:
-            hostname = robot.get("hostname", "")
-            
-            # Build tag path using hostname directly (hostname-based naming)
-            # Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
-            tag_base = "{}/{}".format(SITE_TAG_BASE, hostname)
-            
-            # Prepare tag writes
-            tags_to_write = [
-                "{}/BatteryLevel".format(tag_base),
-                "{}/IsConnected".format(tag_base),
-                "{}/IsCharging".format(tag_base),
-                "{}/RobotStateCode".format(tag_base),
-                "{}/Pose/X".format(tag_base),
-                "{}/Pose/Y".format(tag_base),
-                "{}/Pose/Theta".format(tag_base),
-                "{}/LastPollAtUtc".format(tag_base),
-            ]
-            
-            pose = robot.get("pose", {})
-            values = [
-                robot.get("batteryLevel", 0.0),
-                robot.get("isConnected", False),
-                robot.get("isCharging", False),
-                robot.get("state", "unknown"),
-                pose.get("x", 0.0),
-                pose.get("y", 0.0),
-                pose.get("theta", 0.0),
-                system.date.now(),
-            ]
-            
-            # Write to tags
-            system.tag.writeBlocking(tags_to_write, values)
-            
-        logger.info("Polled {} robots successfully".format(len(robots)))
+        # Initial poll of recent runs to populate mission tags
+        runs_polling.poll_recent_runs()
+        logger.info("Initial runs poll completed")
         
     except Exception as e:
-        logger.error("Robot polling failed: {}".format(str(e)))
+        logger.error("Initialization failed: {}".format(str(e)))
 
-# Execute the polling function
-poll_robots()
+# Execute initialization
+initialize()
 ```
 
 ### 6.8 Web Dev Webhook Endpoint
@@ -2177,35 +2402,40 @@ flowchart TB
   - Gateway Timer Scripts and Web Dev endpoints created within the project already have access to the Project Library
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [ ] Create Project Library structure:
-  - [x] `orbit_api` - Orbit API client with reusable httpClient
-  - [ ] `robot_polling` - Polling logic
+  - [x] `orbit_api` - Orbit API client with reusable httpClient (⚠️ **Note:** Returns config data only, not telemetry)
+  - [ ] `runs_polling` - Mission runs polling logic (renamed from `robot_polling` in v1.9)
   - [ ] `webhook_handlers` - Webhook processing
   - [ ] `notification_engine` - Notification logic
   - [ ] `helpers` - Utility functions (⚠️ **Configure `TAG_BASE_PATH` to match your environment!**)
 - [ ] **Save project** (Project Library not accessible until saved!)
-- [ ] Test modules in Script Console: `orbit_api.get_robots()`
+- [ ] Test modules in Script Console: `orbit_api.get_robots()` and `orbit_api.get_runs()`
 
 ### Phase 3: Tags & UDT (Day 2-3)
 
-- [ ] Create SpotRobot UDT definition in Tag Browser > _types_
-- [ ] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId, PollEnabled
+- [ ] Create SpotRobot UDT definition in Tag Browser > _types_ (See Section 6.2)
+- [ ] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId
 - [ ] Create tag instance using **hostname-based naming**: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
   - ⚠️ **Important:** Use actual Orbit hostname for tag instance name (e.g., `spot-BD-12345678`)
   - This ensures consistency with Orbit API and database configuration
 - [ ] Set instance parameter values:
   - RobotHostname: `spot-BD-12345678` (match your robot's actual hostname)
   - SiteId: `1`
-  - PollEnabled: `true`
+- [ ] ⚠️ **Note:** Telemetry tags (BatteryLevel, Pose, etc.) are placeholders - Orbit does not provide this data. See Section 11.2 for future Spot SDK integration.
 
-### Phase 4: Polling Flow (Day 3)
+### Phase 4: Runs Polling Flow (Day 3)
+
+> **Note (v1.9):** This polls mission RUNS, not robot telemetry. Real-time battery/pose data requires Spot SDK middleware (Section 11.2).
 
 - [ ] Create Gateway Timer Script:
   - Designer > Scripting > Gateway Events > Timer Scripts
-  - Name: `RobotPolling`
-  - Delay: 15000ms, Fixed Rate
-  - Code: `robot_polling.poll_all_robots()`
+  - Name: `RunsPolling`
+  - Delay: 60000ms (60 seconds), Fixed Rate
+  - Code: `runs_polling.poll_recent_runs()`
+- [ ] Create Gateway Startup Script:
+  - Designer > Scripting > Gateway Events > Startup
+  - Code: `runs_polling.sync_robot_config()` and `runs_polling.poll_recent_runs()`
 - [ ] Enable the timer script
-- [ ] Verify tag updates in Tag Browser
+- [ ] Verify mission tag updates in Tag Browser (MissionName, MissionStatusCode, etc.)
 - [ ] Check Gateway logs for polling messages
 
 ### Phase 5: Webhook Flow (Day 3-4)
@@ -2253,10 +2483,12 @@ flowchart TB
 
 ### Phase 9: Testing & Validation
 
-- [ ] Test complete polling → tag update flow
+- [ ] Test complete runs polling → mission tag update flow
 - [ ] Test complete webhook → database → tag → notification flow
+- [ ] Verify mission status tags update correctly (MissionStatusCode, MissionName, etc.)
 - [ ] Verify logging in Gateway logs
 - [ ] Document any configuration differences for production
+- [ ] ⚠️ **Expected:** Telemetry tags (BatteryLevel, Pose, IsConnected) remain at default values - this is correct behavior per Orbit API limitations (Section 11.1)
 
 ---
 
@@ -2575,5 +2807,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.9 (Demo MVP) - Orbit API limitations documented, Spot SDK alternative added*  
+*Version: 2.0 (Demo MVP) - Simplified for actual Orbit API capabilities*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
