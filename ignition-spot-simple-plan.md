@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.7 (Demo) - Centralized tag path configuration with migration strategy + bug fix  
+**Version:** 1.8 (Demo) - Hostname-based tag naming for production consistency  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **1.8** | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API |
 | **1.7** | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic |
 | **1.6** | 2026-02-02 | Added robot validation filter for invalid/empty robots from Orbit API |
 | **1.5** | 2026-02-01 | Initial simplified demo plan |
@@ -170,12 +171,16 @@ flowchart TB
 |-------|------------|---------|
 | **SQL Tables** | PascalCase, Plural | `RoboticsRuns`, `RoboticsRobots` *(schema-less prefix variant)* |
 | **SQL Columns** | PascalCase | `MissionStatusCode`, `StartedAtUtc` |
-| **Tag Paths** | ISA-95 Hierarchy | `Enterprise/Site/Area/Line/Device/Tag` |
+| **Tag Paths** | ISA-95 Hierarchy + Hostname-based Device | `Enterprise/Site001/Assembly/Line001/spot-BD-12345678/BatteryLevel` |
 | **Tag Names** | PascalCase | `BatteryLevel`, `IsConnected`, `MissionStatusCode` |
+| **Robot Device Names** | **Use Orbit hostname as-is** | `spot-BD-12345678` *(not formatted - use actual hostname)* |
+| **Display Names** | Use Nickname field from DB | "Assembly Line Spot" *(stored in `RoboticsRobots.Nickname`)* |
 | **Python** | snake_case | `battery_level`, `mission_status_code` |
 | **Named Queries** | PascalCase | `GetMissionHistory`, `UpsertRun` |
 
 ### 4.2 Tag Hierarchy (Demo)
+
+**Note:** This project uses **hostname-based naming** (e.g., `spot-BD-12345678`) for better traceability and consistency with Orbit API.
 
 ```
 [default]
@@ -183,7 +188,7 @@ flowchart TB
     └── Site001/
         └── Assembly/
             └── Line001/
-                └── Spot001/           ← SpotRobot UDT Instance
+                └── spot-BD-12345678/  ← SpotRobot UDT Instance (uses Orbit hostname)
                     ├── BatteryLevel
                     ├── IsConnected
                     ├── IsCharging
@@ -200,11 +205,32 @@ flowchart TB
 
 ### 4.3 Tag Path Configuration Strategy
 
-This project uses a **two-stage migration approach** for tag base paths to support both demo simplicity and production scalability:
+This project uses a **hostname-based naming approach** with two operational modes for tag base paths:
 
-#### Stage 1: Demo Mode (Hardcoded Constant)
+#### Naming Convention: Hostname-Based (Production Best Practice)
 
-**When to use:** Single site with 1-2 robots
+**Why hostname-based naming?**
+
+| Benefit | Description |
+|---------|-------------|
+| **API Consistency** | Tag names match Orbit hostname exactly (no translation needed) |
+| **Traceability** | Direct correlation between tags and physical robot serial numbers |
+| **Robot Swaps** | No confusion when hardware is replaced or moved |
+| **Debugging** | Logs, tags, and API responses use identical identifiers |
+| **Multi-Site** | BD serial numbers guarantee uniqueness across all sites |
+
+**Example:** Robot hostname `spot-BD-12345678` creates tag path:
+```
+[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678
+```
+
+**Human-Readable Names:** Use the `Nickname` database field for displays:
+- **Tags/Data:** `spot-BD-12345678` (hostname)
+- **UI Display:** "Assembly Line Spot" (nickname)
+
+#### Stage 1: Demo Mode (Hardcoded Concatenation)
+
+**When to use:** Single site with 1-2 robots, quick testing
 
 **Configuration:** Set in `helpers` module
 ```python
@@ -213,10 +239,11 @@ USE_DATABASE_FOR_TAG_PATHS = False
 ```
 
 **How it works:**
-- Tag paths are constructed as: `TAG_BASE_PATH + "/" + device_name`
-- Example: `[default]Enterprise/Site001/Assembly/Line001/AssemblyLineSpot`
+- Tag paths are constructed as: `TAG_BASE_PATH + "/" + robot_hostname`
+- Example: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
+- **No name formatting/conversion** - uses hostname exactly as-is
 - Fast and simple for demo environments
-- **To customize for your environment:** Change `TAG_BASE_PATH` in the helpers module to match your tag provider and hierarchy
+- **To customize:** Change `TAG_BASE_PATH` to match your tag hierarchy
 
 #### Stage 2: Production Mode (Database Lookup)
 
@@ -235,10 +262,10 @@ USE_DATABASE_FOR_TAG_PATHS = True
 
 **Migration Example:**
 
-| Robot | Demo Mode Path (Constructed) | Production Mode Path (From DB) |
-|-------|------------------------------|--------------------------------|
-| Spot001 | `[default]Enterprise/Site001/Assembly/Line001/Spot001` | `[default]Enterprise/Site001/Assembly/Line001/Spot001` |
-| Spot002 | `[default]Enterprise/Site001/Assembly/Line001/Spot002` | `[default]Enterprise/Site002/Warehouse/Area03/Spot002` |
+| Robot Hostname | Demo Mode Path (Concatenated) | Production Mode Path (From DB) |
+|----------------|-------------------------------|--------------------------------|
+| spot-BD-12345678 | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678` | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678` |
+| spot-BD-87654321 | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-87654321` | `[default]Enterprise/Site002/Warehouse/Area03/spot-BD-87654321` |
 
 **Advantages of This Approach:**
 
@@ -525,9 +552,12 @@ VALUES (
 );
 
 -- Demo Robot
--- Note: Hostname must match exactly what's registered in Orbit (typically BD serial-based)
+-- Note: 
+--   - Hostname must match exactly what's registered in Orbit (typically BD serial-based)
+--   - TagBasePath uses the hostname for consistency and traceability
+--   - Nickname is human-friendly name for UI display
 INSERT INTO RoboticsRobots (SiteId, Hostname, Nickname, TagBasePath)
-VALUES (1, 'spot-BD-12345678', 'Assembly Line Spot', '[default]Enterprise/Site001/Assembly/Line001/Spot001');
+VALUES (1, 'spot-BD-12345678', 'Assembly Line Spot', '[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678');
 
 -- Add Missing Trigger Types
 INSERT INTO RoboticsTriggerTypeCodes VALUES
@@ -688,7 +718,8 @@ Project: SpotOrbitIntegration
 │   │   └── render_template()       # {{variable}} replacement
 │   │
 │   └── helpers                     ← Shared utilities
-│       ├── hostname_to_tag_path()  # spot-BD-12345678 → SpotBD12345678
+│       ├── get_robot_tag_base()    # Get tag path (demo: concat, prod: DB lookup)
+│       ├── hostname_to_tag_path()  # DEPRECATED - kept for compatibility
 │       └── get_site_config()       # Read site configuration
 │
 ├── Gateway Events (Designer > Scripting > Gateway Events)
@@ -751,7 +782,7 @@ SpotRobot (UDT Definition)
 │   └── PollEnabled         : Boolean  -- Enable/disable polling for this robot
 │
 ├── [Pre-defined Parameters Available] ← Built-in, no configuration needed
-│   ├── {InstanceName}      -- Name of this UDT instance (e.g., "Spot001")
+│   ├── {InstanceName}      -- Name of this UDT instance (e.g., "spot-BD-12345678")
 │   ├── {PathToParentFolder}-- Full path to containing folder
 │   └── {TagName}           -- Name of the specific tag using this parameter
 │
@@ -776,13 +807,16 @@ SpotRobot (UDT Definition)
     └── PollErrorCount      : Int
 ```
 
-**UDT Instance Example:**
+**UDT Instance Example (Hostname-Based Naming):**
 ```
-[default]Enterprise/Site001/Assembly/Line001/Spot001  ← Instance of SpotRobot UDT
+[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678  ← Instance of SpotRobot UDT
     Parameters:
         RobotHostname = "spot-BD-12345678"   ← Must match Orbit hostname exactly
         SiteId = 1
         PollEnabled = true
+
+Note: Instance name uses the hostname for consistency with Orbit API.
+      Display "Assembly Line Spot" nickname in UI using the Nickname database field.
 ```
 
 ### 6.3 Project Library: orbit_api Module
@@ -1046,8 +1080,17 @@ Purpose: Shared utility functions
 # ============================================================
 # CONFIGURATION - Tag Base Path
 # ============================================================
-# For Demo: Hardcoded tag base path (single site)
-# For Production: Set USE_DATABASE_FOR_TAG_PATHS = True and query from RoboticsRobots table
+# Hostname-Based Naming: Tag paths use Orbit hostname (e.g., spot-BD-12345678) for consistency
+# 
+# For Demo: Set USE_DATABASE_FOR_TAG_PATHS = False
+#   - Tag path constructed as: TAG_BASE_PATH + "/" + robot_hostname
+#   - Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
+#   - Change TAG_BASE_PATH below to match your tag provider and hierarchy
+#
+# For Production: Set USE_DATABASE_FOR_TAG_PATHS = True
+#   - Tag paths queried from RoboticsRobots.TagBasePath column
+#   - Supports multiple sites with different tag hierarchies
+#
 TAG_BASE_PATH = "[default]Enterprise/Site001/Assembly/Line001"
 USE_DATABASE_FOR_TAG_PATHS = False  # Set True when scaling to multiple sites
 
@@ -1055,15 +1098,18 @@ def hostname_to_tag_path(name):
     """
     Convert robot nickname to tag path format.
     
-    Note: Use nickname (human-friendly name), not the Orbit hostname (spot-BD-XXXXXXXX).
+    DEPRECATED: This function is kept for backwards compatibility but is no longer
+    recommended. The current best practice is to use the hostname directly.
     
-    Examples:
+    Note: For hostname-based naming (recommended), use the hostname as-is instead
+    of formatting it. This function was designed for friendly names like "Assembly Line Spot".
+    
+    Examples (legacy approach):
         "Assembly Line Spot" → "AssemblyLineSpot"
         "Spot 001" → "Spot001"
-        "spot-BD-12345678" → "SpotBd12345678" (avoid using hostname directly)
     
     Args:
-        name: Robot nickname string (preferred) or hostname
+        name: Robot nickname string (for legacy friendly-name approach)
     
     Returns:
         str: Formatted tag path component
@@ -1072,30 +1118,36 @@ def hostname_to_tag_path(name):
 
 def get_robot_tag_base(robot_hostname, robot_nickname=None):
     """
-    Get the full tag base path for a robot.
+    Get the full tag base path for a robot using hostname-based naming.
+    
+    Hostname-Based Approach (v1.8+):
+        Uses Orbit hostname directly (e.g., "spot-BD-12345678") for better
+        traceability, API consistency, and multi-site scalability.
     
     Migration Strategy:
         Demo (USE_DATABASE_FOR_TAG_PATHS=False):
-            Returns: TAG_BASE_PATH + formatted device name
-            Example: "[default]Enterprise/Site001/Assembly/Line001/Spot001"
+            Returns: TAG_BASE_PATH + "/" + robot_hostname
+            Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
+            Note: Hostname is used directly without formatting
         
         Production (USE_DATABASE_FOR_TAG_PATHS=True):
             Queries RoboticsRobots table for TagBasePath by hostname
+            Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678" (from DB)
             Supports multiple sites with different tag hierarchies
     
     Args:
         robot_hostname: Robot hostname from Orbit (e.g., 'spot-BD-12345678')
-        robot_nickname: Optional robot nickname (for demo mode formatting)
+        robot_nickname: Optional robot nickname (not used in hostname-based approach)
     
     Returns:
         str: Full tag base path, or None if robot not found (database mode)
     
     Examples:
-        Demo mode: get_robot_tag_base("spot-BD-12345678", "Assembly Line Spot")
-            → "[default]Enterprise/Site001/Assembly/Line001/AssemblyLineSpot"
+        Demo mode: get_robot_tag_base("spot-BD-12345678")
+            → "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
         
         Production mode: get_robot_tag_base("spot-BD-12345678")
-            → "[default]Enterprise/Site001/Assembly/Line001/Spot001" (from database)
+            → "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678" (from database)
     """
     logger = system.util.getLogger("helpers")
     
@@ -1119,10 +1171,8 @@ def get_robot_tag_base(robot_hostname, robot_nickname=None):
             logger.error("Failed to query robot tag path: {}".format(str(e)))
             return None
     else:
-        # Demo: Use hardcoded TAG_BASE_PATH + device name
-        name_to_format = robot_nickname if robot_nickname else robot_hostname
-        device_name = hostname_to_tag_path(name_to_format)
-        tag_path = "{}/{}".format(TAG_BASE_PATH, device_name)
+        # Demo: Use hardcoded TAG_BASE_PATH + hostname (no formatting)
+        tag_path = "{}/{}".format(TAG_BASE_PATH, robot_hostname)
         logger.debug("Using hardcoded tag path for {}: {}".format(
             robot_hostname, tag_path))
         return tag_path
@@ -1223,11 +1273,10 @@ def poll_robots():
         
         for robot in robots:
             hostname = robot.get("hostname", "")
-            nickname = robot.get("nickname", hostname)
             
-            # Build tag path from nickname: "Assembly Line Spot" → "AssemblyLineSpot"
-            device_name = nickname.replace(" ", "").replace("-", "").title()
-            tag_base = "{}/{}".format(SITE_TAG_BASE, device_name)
+            # Build tag path using hostname directly (hostname-based naming)
+            # Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
+            tag_base = "{}/{}".format(SITE_TAG_BASE, hostname)
             
             # Prepare tag writes
             tags_to_write = [
@@ -1733,10 +1782,10 @@ WHERE r.Hostname = :hostname
 ORDER BY r.RobotId DESC;
 ```
 
-**Example Return:**
+**Example Return (Hostname-Based Naming):**
 | TagBasePath |
 |-------------|
-| `[default]Enterprise/Site001/Assembly/Line001/Spot001` |
+| `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678` |
 
 #### GetSiteConfig
 
@@ -2031,17 +2080,19 @@ flowchart TB
         end
         
         subgraph ROBOT_SECTION["Robot Status"]
-            subgraph CARD1["Spot 001"]
+            subgraph CARD1["Assembly Line Spot"]
                 C1_BAT[🔋 78%]
                 C1_CONN[● Connected]
                 C1_MISSION[Running: Inspection-A]
             end
+            NOTE1["(Display: Nickname | Tags: spot-BD-12345678)"]
         end
         
         subgraph MISSION_TABLE["Recent Missions"]
             TABLE[Mission Name | Status | Robot | Started | Duration]
-            ROW1[Inspection-A | ✅ Complete | Spot001 | 14:00 | 15 min]
-            ROW2[Patrol-B | 🔄 Running | Spot001 | 14:20 | -- ]
+            ROW1[Inspection-A | ✅ Complete | Assembly Line Spot | 14:00 | 15 min]
+            ROW2[Patrol-B | 🔄 Running | Assembly Line Spot | 14:20 | -- ]
+            NOTE2["(UI shows Nickname, data uses hostname)"]
         end
     end
 ```
@@ -2049,8 +2100,8 @@ flowchart TB
 ### 7.3 RobotCard Template
 
 **View Parameters:**
-- `tagBasePath` : String (e.g., `[default]Enterprise/Site001/Assembly/Line001/Spot001`)
-- `robotName` : String (e.g., `Spot 001`)
+- `tagBasePath` : String (e.g., `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`)
+- `robotName` : String (e.g., `Assembly Line Spot` - from Nickname field for display)
 
 **Bindings:**
 
@@ -2137,8 +2188,13 @@ flowchart TB
 
 - [ ] Create SpotRobot UDT definition in Tag Browser > _types_
 - [ ] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId, PollEnabled
-- [ ] Create tag instance: `[default]Enterprise/Site001/Assembly/Line001/Spot001`
-- [ ] Set instance parameter values for demo robot
+- [ ] Create tag instance using **hostname-based naming**: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
+  - ⚠️ **Important:** Use actual Orbit hostname for tag instance name (e.g., `spot-BD-12345678`)
+  - This ensures consistency with Orbit API and database configuration
+- [ ] Set instance parameter values:
+  - RobotHostname: `spot-BD-12345678` (match your robot's actual hostname)
+  - SiteId: `1`
+  - PollEnabled: `true`
 
 ### Phase 4: Polling Flow (Day 3)
 
@@ -2252,5 +2308,5 @@ flowchart TB
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.7 (Demo MVP) - Centralized tag path configuration with migration strategy , and also fixed bug in quality code methods*
+*Version: 1.8 (Demo MVP) - Hostname-based tag naming for production consistency*
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
