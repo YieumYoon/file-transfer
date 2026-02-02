@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.0 (Demo) - Simplified for actual Orbit API capabilities  
+**Version:** 2.1 (Demo) - Added Comprehensive Webhook Testing Documentation  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.1** | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12 |
 | **2.0** | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow |
 | **1.9** | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference |
 | **1.8** | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API |
@@ -1898,7 +1899,486 @@ def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body
         )
 ```
 
-### 6.11 Named Queries
+### 6.11 Testing the Webhook Implementation
+
+After implementing the webhook endpoint and handlers, test the integration to ensure everything works correctly.
+
+#### 6.11.1 Test Preparation
+
+Before testing, ensure:
+- ✅ Database tables are created with sample data
+- ✅ Tag provider has demo robot structure (`[default]Demo/Robots/spot-demo-01/`)
+- ✅ Web Dev resource `orbit/webhook` is created with doPost enabled
+- ✅ Project Library modules (`webhook_handlers`, `notification_engine`, `helpers`) exist
+- ✅ Named Queries are created (see section 6.12)
+- ✅ At least one notification rule exists in the database
+
+#### 6.11.2 Method 1: Script Console Test (Recommended for Development)
+
+**Location:** Designer > Tools > Script Console
+
+This method tests the handler logic directly without requiring external HTTP calls.
+
+```python
+"""
+Script Console Test: Simulate webhook event processing
+Run this in the Designer Script Console to test webhook handlers
+"""
+
+# Test Case 1: Mission Started Event
+print "=" * 60
+print "TEST 1: Mission Started Event"
+print "=" * 60
+
+test_payload_started = {
+    "type": "run.started",
+    "data": {
+        "uuid": "test-run-001",
+        "missionName": "Daily Inspection",
+        "status": "started",
+        "robot": {
+            "hostname": "spot-demo-01"
+        }
+    }
+}
+
+try:
+    webhook_handlers.handle_run_event(test_payload_started)
+    print "✓ Mission started event processed"
+except Exception as e:
+    print "✗ Error: {}".format(str(e))
+
+# Wait a moment for processing
+system.util.invokeLater(lambda: test_completed(), 2000)
+
+def test_completed():
+    # Test Case 2: Mission Completed Event
+    print "\n" + "=" * 60
+    print "TEST 2: Mission Completed Event"
+    print "=" * 60
+    
+    test_payload_completed = {
+        "type": "run.completed",
+        "data": {
+            "uuid": "test-run-001",  # Same UUID to test update
+            "missionName": "Daily Inspection",
+            "status": "completed",
+            "robot": {
+                "hostname": "spot-demo-01"
+            }
+        }
+    }
+    
+    try:
+        webhook_handlers.handle_run_event(test_payload_completed)
+        print "✓ Mission completed event processed"
+    except Exception as e:
+        print "✗ Error: {}".format(str(e))
+    
+    # Test Case 3: Mission Failed Event
+    system.util.invokeLater(lambda: test_failed(), 2000)
+
+def test_failed():
+    print "\n" + "=" * 60
+    print "TEST 3: Mission Failed Event"
+    print "=" * 60
+    
+    test_payload_failed = {
+        "type": "run.failed",
+        "data": {
+            "uuid": "test-run-002",
+            "missionName": "Emergency Response",
+            "status": "failed",
+            "robot": {
+                "hostname": "spot-demo-01"
+            }
+        }
+    }
+    
+    try:
+        webhook_handlers.handle_run_event(test_payload_failed)
+        print "✓ Mission failed event processed"
+    except Exception as e:
+        print "✗ Error: {}".format(str(e))
+    
+    print "\n" + "=" * 60
+    print "TEST COMPLETE - Check results below"
+    print "=" * 60
+
+# Start the test sequence
+print "\nStarting webhook handler tests..."
+print "Check Gateway logs: Status > Diagnostics > Logs"
+print "Filter by: orbit.webhook\n"
+```
+
+#### 6.11.3 Method 2: HTTP Endpoint Test (Production-Ready)
+
+Test the actual Web Dev HTTP endpoint using `curl` or Postman.
+
+**Step 1:** Get your endpoint URL
+- Format: `http://<gateway>:8088/system/webdev/<ProjectName>/orbit/webhook`
+- Example: `http://localhost:8088/system/webdev/SpotDemo/orbit/webhook`
+
+**Step 2:** Send test request from terminal
+
+```bash
+# Test 1: Mission Started
+curl -X POST \
+  http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "run.started",
+    "data": {
+      "uuid": "curl-test-001",
+      "missionName": "Test Mission via curl",
+      "status": "started",
+      "robot": {
+        "hostname": "spot-demo-01"
+      }
+    }
+  }'
+
+# Expected Response:
+# {"status":"ok","received":"run.started"}
+```
+
+```bash
+# Test 2: Mission Completed
+curl -X POST \
+  http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "run.completed",
+    "data": {
+      "uuid": "curl-test-001",
+      "missionName": "Test Mission via curl",
+      "status": "completed",
+      "robot": {
+        "hostname": "spot-demo-01"
+      }
+    }
+  }'
+```
+
+#### 6.11.4 Method 3: Test Utility Module (Optional)
+
+Create a reusable test utility in Project Library for ongoing testing.
+
+**Location:** Designer > Project Browser > Scripting > Project Library > webhook_test_utils
+
+```python
+"""
+Project Library: webhook_test_utils
+Location: Designer > Project Browser > Scripting > Project Library
+Purpose: Testing utilities for webhook implementation
+"""
+
+def send_test_webhook(event_type, run_uuid=None, mission_name="Test Mission", robot_hostname="spot-demo-01"):
+    """
+    Send a test webhook event to handlers.
+    
+    Args:
+        event_type: "run.started", "run.completed", or "run.failed"
+        run_uuid: Optional UUID (generates one if not provided)
+        mission_name: Mission name for test
+        robot_hostname: Robot hostname for test
+    
+    Returns:
+        dict: Test results with success/error information
+    """
+    import uuid
+    logger = system.util.getLogger("orbit.webhook.test")
+    
+    if not run_uuid:
+        run_uuid = "test-" + str(uuid.uuid4())[:8]
+    
+    status_map = {
+        "run.started": "started",
+        "run.completed": "completed",
+        "run.failed": "failed"
+    }
+    
+    payload = {
+        "type": event_type,
+        "data": {
+            "uuid": run_uuid,
+            "missionName": mission_name,
+            "status": status_map.get(event_type, "started"),
+            "robot": {
+                "hostname": robot_hostname
+            }
+        }
+    }
+    
+    try:
+        webhook_handlers.handle_run_event(payload)
+        logger.info("Test webhook sent: {} - {}".format(event_type, run_uuid))
+        return {
+            "success": True,
+            "run_uuid": run_uuid,
+            "event_type": event_type,
+            "message": "Test webhook processed successfully"
+        }
+    except Exception as e:
+        logger.error("Test webhook failed: {}".format(str(e)))
+        return {
+            "success": False,
+            "run_uuid": run_uuid,
+            "event_type": event_type,
+            "error": str(e)
+        }
+
+
+def verify_test_results(run_uuid):
+    """
+    Verify test webhook results in database and tags.
+    
+    Args:
+        run_uuid: UUID of test run to verify
+    
+    Returns:
+        dict: Verification results
+    """
+    logger = system.util.getLogger("orbit.webhook.test")
+    results = {
+        "run_uuid": run_uuid,
+        "database_check": False,
+        "tags_check": False,
+        "notification_check": False,
+        "errors": []
+    }
+    
+    # Check 1: Database record
+    try:
+        ds = system.db.runPrepQuery(
+            "SELECT * FROM Run WHERE RunUuid = ?",
+            [run_uuid],
+            database="MSSQL_Robotics"
+        )
+        if ds and len(ds) > 0:
+            results["database_check"] = True
+            results["database_record"] = dict(ds[0])
+        else:
+            results["errors"].append("Run not found in database")
+    except Exception as e:
+        results["errors"].append("Database check failed: {}".format(str(e)))
+    
+    # Check 2: Tag updates
+    try:
+        tag_path = "[default]Demo/Robots/spot-demo-01/MissionId"
+        tag_value = system.tag.readBlocking([tag_path])[0]
+        if tag_value.value == run_uuid:
+            results["tags_check"] = True
+        else:
+            results["errors"].append("Tag MissionId does not match: expected {}, got {}".format(
+                run_uuid, tag_value.value
+            ))
+    except Exception as e:
+        results["errors"].append("Tag check failed: {}".format(str(e)))
+    
+    # Check 3: Notification history
+    try:
+        ds = system.db.runPrepQuery(
+            "SELECT * FROM NotificationHistory WHERE RunUuid = ?",
+            [run_uuid],
+            database="MSSQL_Robotics"
+        )
+        if ds and len(ds) > 0:
+            results["notification_check"] = True
+            results["notifications_sent"] = len(ds)
+        else:
+            results["notification_check"] = True  # OK if no rules matched
+            results["notifications_sent"] = 0
+    except Exception as e:
+        results["errors"].append("Notification check failed: {}".format(str(e)))
+    
+    results["overall_success"] = (
+        results["database_check"] and 
+        results["tags_check"] and 
+        len(results["errors"]) == 0
+    )
+    
+    return results
+
+
+def run_full_test_suite():
+    """
+    Run complete test suite for webhook implementation.
+    Returns detailed test results.
+    """
+    logger = system.util.getLogger("orbit.webhook.test")
+    logger.info("Starting full webhook test suite...")
+    
+    results = {
+        "timestamp": system.date.now(),
+        "tests": []
+    }
+    
+    test_cases = [
+        ("run.started", "Full Test - Started"),
+        ("run.completed", "Full Test - Completed"),
+        ("run.failed", "Full Test - Failed")
+    ]
+    
+    for event_type, mission_name in test_cases:
+        # Send webhook
+        send_result = send_test_webhook(event_type, mission_name=mission_name)
+        
+        # Wait for processing
+        system.util.sleep(1000)
+        
+        # Verify results
+        if send_result["success"]:
+            verify_result = verify_test_results(send_result["run_uuid"])
+            results["tests"].append({
+                "event_type": event_type,
+                "send_result": send_result,
+                "verify_result": verify_result
+            })
+        else:
+            results["tests"].append({
+                "event_type": event_type,
+                "send_result": send_result,
+                "verify_result": None
+            })
+    
+    logger.info("Test suite completed. Success: {}/{}".format(
+        sum(1 for t in results["tests"] if t.get("verify_result", {}).get("overall_success")),
+        len(results["tests"])
+    ))
+    
+    return results
+```
+
+**Usage in Script Console:**
+
+```python
+# Quick test
+result = webhook_test_utils.send_test_webhook("run.completed")
+print result
+
+# Verify results
+verification = webhook_test_utils.verify_test_results(result["run_uuid"])
+print verification
+
+# Run full test suite
+suite_results = webhook_test_utils.run_full_test_suite()
+print suite_results
+```
+
+#### 6.11.5 Validation Checklist
+
+After running tests, verify the following:
+
+**✅ Gateway Logs** (Gateway > Status > Diagnostics > Logs)
+
+Filter logs by these logger names:
+- `orbit.webhook` - Webhook received and routing
+- `orbit.webhook.run` - Run event processing
+- `orbit.webhook.db` - Database operations
+- `orbit.webhook.tags` - Tag write operations
+- `orbit.notification` - Notification evaluation
+- `orbit.notification.send` - Email sending
+
+Expected log entries:
+```
+INFO [orbit.webhook] Received webhook: run.completed from 127.0.0.1
+INFO [orbit.webhook.db] Upserted run test-run-001: 1 rows affected
+INFO [orbit.webhook.run] Processed run event: Daily Inspection - COMP
+INFO [orbit.notification] Sent notification: Mission Completed: Daily Inspection
+```
+
+**✅ Database Verification**
+
+Run queries in Database Query Browser:
+
+```sql
+-- Check run was inserted/updated
+SELECT * FROM Run 
+WHERE RunUuid = 'test-run-001'
+ORDER BY LastUpdatedAtUtc DESC;
+
+-- Check notification history
+SELECT * FROM NotificationHistory 
+WHERE RunUuid = 'test-run-001'
+ORDER BY SentAtUtc DESC;
+
+-- Check run counts by status
+SELECT MissionStatusCode, COUNT(*) as Count
+FROM Run
+GROUP BY MissionStatusCode;
+```
+
+**✅ Tag Verification** (Designer > Tag Browser)
+
+Navigate to `[default]Demo/Robots/spot-demo-01/` and verify:
+- `MissionId` = test run UUID
+- `MissionName` = test mission name
+- `MissionStatusCode` = appropriate code (RUN/COMP/FAIL)
+- `LastRunAtUtc` = recent timestamp
+
+**✅ Email Verification**
+
+If notification rules are configured:
+1. Check your email inbox for test notifications
+2. Verify `NotificationHistory` table has entries with `IsSent = 1`
+3. Check email subject and body contain correct template variables
+
+#### 6.11.6 Common Issues and Troubleshooting
+
+| Issue | Possible Cause | Solution |
+|-------|---------------|----------|
+| HTTP 404 on endpoint | Wrong project name or path | Verify URL matches project name exactly (case-sensitive) |
+| `NameError: webhook_handlers` | Module not created | Create Project Library module `webhook_handlers` |
+| Database write fails | Named Query missing | Verify `UpsertRun` Named Query exists |
+| Tag write fails | Tag path doesn't exist | Create demo robot tag structure or update `get_robot_tag_base()` |
+| No notification sent | No matching rules | Add test rule in `NotificationRule` table |
+| `basestring not defined` error | Python 3 vs Jython 2.7 | Change `basestring` to `(str, unicode)` for Jython |
+
+#### 6.11.7 Performance Testing
+
+For production deployments, test webhook performance:
+
+```python
+"""
+Performance test: Multiple rapid webhooks
+Tests thread safety and database contention handling
+"""
+import time
+
+def performance_test(num_requests=10):
+    """Send multiple webhooks rapidly to test performance."""
+    start_time = time.time()
+    results = []
+    
+    for i in range(num_requests):
+        result = webhook_test_utils.send_test_webhook(
+            "run.completed",
+            run_uuid="perf-test-{:03d}".format(i),
+            mission_name="Performance Test {}".format(i)
+        )
+        results.append(result)
+        
+        # Small delay to prevent overwhelming the system
+        system.util.sleep(100)
+    
+    elapsed = time.time() - start_time
+    success_count = sum(1 for r in results if r["success"])
+    
+    print "Performance Test Results:"
+    print "  Requests: {}".format(num_requests)
+    print "  Successful: {}".format(success_count)
+    print "  Failed: {}".format(num_requests - success_count)
+    print "  Total Time: {:.2f}s".format(elapsed)
+    print "  Avg Time: {:.2f}ms".format((elapsed / num_requests) * 1000)
+    
+    return results
+
+# Run performance test
+performance_test(20)
+```
+
+### 6.12 Named Queries
 
 > **Reference:** [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries), [Named Query Parameters](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries/named-query-parameters)
 
@@ -2403,12 +2883,12 @@ flowchart TB
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [ ] Create Project Library structure:
   - [x] `orbit_api` - Orbit API client with reusable httpClient (⚠️ **Note:** Returns config data only, not telemetry)
-  - [ ] `runs_polling` - Mission runs polling logic (renamed from `robot_polling` in v1.9)
-  - [ ] `webhook_handlers` - Webhook processing
-  - [ ] `notification_engine` - Notification logic
-  - [ ] `helpers` - Utility functions (⚠️ **Configure `TAG_BASE_PATH` to match your environment!**)
-- [ ] **Save project** (Project Library not accessible until saved!)
-- [ ] Test modules in Script Console: `orbit_api.get_robots()` and `orbit_api.get_runs()`
+  - [x] `runs_polling` - Mission runs polling logic (renamed from `robot_polling` in v1.9)
+  - [x] `webhook_handlers` - Webhook processing
+  - [x] `notification_engine` - Notification logic
+  - [x] `helpers` - Utility functions (⚠️ **Configure `TAG_BASE_PATH` to match your environment!**)
+- [x] **Save project** (Project Library not accessible until saved!)
+- [x] Test modules in Script Console: `orbit_api.get_robots()` and `orbit_api.get_runs()`
 
 ### Phase 3: Tags & UDT (Day 2-3)
 
@@ -2807,5 +3287,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.0 (Demo MVP) - Simplified for actual Orbit API capabilities*  
+*Version: 2.1 (Demo MVP) - Added Comprehensive Webhook Testing Documentation*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
