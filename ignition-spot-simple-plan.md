@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.1 (Demo) - Added Comprehensive Webhook Testing Documentation  
+**Version:** 2.2 (Demo) - Fixed Notification Rules Schema Consistency  
 **Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.2** | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping |
 | **2.1** | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12 |
 | **2.0** | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow |
 | **1.9** | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference |
@@ -567,38 +568,44 @@ INSERT INTO RoboticsTriggerTypeCodes VALUES
 ('BATTERY_LOW', 'Battery Level Below Threshold'),
 ('CONNECTIVITY', 'Robot Connection Lost');
 
--- Sample Notification Rules (All 5 Trigger Types)
-INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, EmailSubjectTemplate, EmailBodyTemplate)
+-- Sample Notification Rules (All 6 Trigger Types)
+-- Demonstrates both MissionNamePattern (LIKE matching) and StatusCodeFilter (exact matching)
+INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, StatusCodeFilter, EmailSubjectTemplate, EmailBodyTemplate)
 VALUES 
--- Rule 1: Mission Started (any mission)
-(1, 'Mission Started Alert', 'RUN_START', NULL, 
+-- Rule 1: Mission Started (any mission, any status)
+(1, 'Mission Started Alert', 'RUN_START', NULL, NULL,
  '[INFO] Mission Started: {{MissionName}}', 
  'Robot {{RobotNickname}} has started mission {{MissionName}} at {{StartedAtUtc}}. Monitor progress in dashboard.'),
 
--- Rule 2: Mission Completed (any mission)
-(1, 'Mission Completed', 'RUN_COMP', NULL, 
+-- Rule 2: Mission Completed (any mission, any status)
+(1, 'Mission Completed', 'RUN_COMP', NULL, NULL,
  '[SUCCESS] Mission Completed: {{MissionName}}', 
  'Robot {{RobotNickname}} completed mission {{MissionName}} at {{CompletedAtUtc}}. Duration: {{Duration}} minutes.'),
 
--- Rule 3: Mission Failed (any mission)
-(1, 'Mission Failed Alert', 'RUN_FAIL', NULL, 
+-- Rule 3: Mission Failed (any mission, any status)
+(1, 'Mission Failed Alert', 'RUN_FAIL', NULL, NULL,
  '[ALERT] Mission Failed: {{MissionName}}', 
  'Robot {{RobotNickname}} failed mission {{MissionName}} at {{CompletedAtUtc}}. Please investigate immediately.'),
 
--- Rule 4: Inspection Complete (specific mission pattern)
-(1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', 
+-- Rule 4: Inspection Complete (specific mission pattern, any status)
+(1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', NULL,
  '[INFO] Inspection Complete: {{MissionName}}', 
  'Inspection mission {{MissionName}} completed successfully on {{CompletedAtUtc}}. Duration: {{Duration}} minutes. Review results in Orbit.'),
 
--- Rule 5: Battery Low Warning
-(1, 'Battery Low Warning', 'BATTERY_LOW', NULL,
+-- Rule 5: Battery Low Warning (not mission-related)
+(1, 'Battery Low Warning', 'BATTERY_LOW', NULL, NULL,
  '[WARNING] Low Battery: {{RobotNickname}}',
  'Robot {{RobotNickname}} battery is below 20%. Current level: {{BatteryLevel}}%. Please recharge soon.'),
 
--- Rule 6: Robot Connectivity Issue
-(1, 'Robot Connectivity Issue', 'CONNECTIVITY', NULL,
+-- Rule 6: Robot Connectivity Issue (not mission-related)
+(1, 'Robot Connectivity Issue', 'CONNECTIVITY', NULL, NULL,
  '[CRITICAL] Robot Connection Lost: {{RobotNickname}}',
- 'Robot {{RobotNickname}} has lost connection to Orbit. Last seen: {{LastSeenUtc}}. Check network and robot status.');
+ 'Robot {{RobotNickname}} has lost connection to Orbit. Last seen: {{LastSeenUtc}}. Check network and robot status.'),
+
+-- Rule 7: Failed Patrol Missions Only (demonstrates both pattern AND status filtering)
+(1, 'Failed Patrol Alert', 'RUN_FAIL', '%Patrol%', 'FAIL',
+ '[URGENT] Patrol Mission Failed: {{MissionName}}',
+ 'ATTENTION: Patrol mission {{MissionName}} has FAILED at {{CompletedAtUtc}}. This requires immediate investigation by the robotics team.');
 
 -- Recipients for rules (using same email with different display names for testing)
 INSERT INTO RoboticsNotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
@@ -624,7 +631,11 @@ VALUES
 
 -- Rule 6: Connectivity Issues
 (6, 'to', 'your.email@example.com', 'IT Support'),
-(6, 'cc', 'your.email@example.com', 'Maintenance Team');
+(6, 'cc', 'your.email@example.com', 'Maintenance Team'),
+
+-- Rule 7: Failed Patrol (escalated priority)
+(7, 'to', 'your.email@example.com', 'Robotics Manager'),
+(7, 'cc', 'your.email@example.com', 'Operations Director');
 
 -- Sample Run Data (for testing dashboard and notifications)
 INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc, IsProcessed)
@@ -2556,6 +2567,18 @@ WHERE nr.IsActive = 1
 ORDER BY nr.Priority ASC, nr.NotificationRuleId ASC;
 ```
 
+**Filtering Logic:**
+- **`TriggerTypeCode`**: Exact match (e.g., `RUN_START`, `RUN_COMP`, `RUN_FAIL`)
+- **`StatusCodeFilter`**: `NULL` = match all statuses, or exact match required (e.g., `FAIL`, `COMP`)
+- **`MissionNamePattern`**: Checked in Python code using LIKE-style matching (evaluated after query returns)
+  - `NULL` = match all missions
+  - Pattern like `%Patrol%` = match missions containing "Patrol"
+
+**Example:** For a failed patrol mission:
+- Orbit sends: `status="FAIL"`, `mission="Patrol-North"`
+- Query returns all rules with `TriggerTypeCode=RUN_FAIL` AND (`StatusCodeFilter=NULL` OR `StatusCodeFilter=FAIL`)
+- Python filters by: `MissionNamePattern=NULL` (all missions) OR `MissionNamePattern=%Patrol%` (contains "Patrol")
+
 #### GetRunNotificationContext
 
 **Type:** Query  
@@ -2862,8 +2885,25 @@ flowchart TB
 | Rule Name | Patrol Started |
 | Trigger Type | `RUN_START` |
 | Mission Pattern | `%Patrol%` |
+| Status Filter | `NULL` |
 | Subject | `[INFO] Patrol Started: {{MissionName}}` |
 | Recipients | security@company.com (to) |
+
+### 8.4 Rule: Failed Patrol Only → Robotics Manager (Combined Filtering)
+
+| Field | Value |
+|-------|-------|
+| Rule Name | Failed Patrol Alert |
+| Trigger Type | `RUN_FAIL` |
+| Mission Pattern | `%Patrol%` (LIKE match) |
+| Status Filter | `FAIL` (exact match) |
+| Subject | `[URGENT] Patrol Mission Failed: {{MissionName}}` |
+| Recipients | robotics-manager@company.com (to), operations-director@company.com (cc) |
+
+**Note:** This rule demonstrates combining both filters:
+- `MissionNamePattern` uses SQL LIKE matching (`%Patrol%` matches any mission with "Patrol" in the name)
+- `StatusCodeFilter` uses exact matching (only triggers when status is exactly `FAIL`)
+- Together, they create a highly specific rule that only fires for failed patrol missions
 
 ---
 
@@ -3293,5 +3333,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.1 (Demo MVP) - Added Comprehensive Webhook Testing Documentation*  
+*Version: 2.2 (Demo MVP) - Fixed Notification Rules Schema Consistency*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
