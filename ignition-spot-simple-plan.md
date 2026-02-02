@@ -1,8 +1,8 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 1.4 (Demo) - Updated with Ignition Best Practices  
-**Last Updated:** 2026-01-30
+**Version:** 1.5 (Demo) - Corrected Gateway Scripting Project guidance  
+**Last Updated:** 2026-02-02
 
 > **Key Documentation References:**
 > - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
@@ -459,8 +459,9 @@ VALUES (
 );
 
 -- Demo Robot
+-- Note: Hostname must match exactly what's registered in Orbit (typically BD serial-based)
 INSERT INTO RoboticsRobots (SiteId, Hostname, Nickname, TagBasePath)
-VALUES (1, 'spot-001', 'Spot 001', '[default]Enterprise/Site001/Assembly/Line001/Spot001');
+VALUES (1, 'spot-BD-12345678', 'Assembly Line Spot', '[default]Enterprise/Site001/Assembly/Line001/Spot001');
 
 -- Add Missing Trigger Types
 INSERT INTO RoboticsTriggerTypeCodes VALUES
@@ -580,9 +581,9 @@ GO
 
 | Resource Type | Location | Storage | Access Scope |
 |---------------|----------|---------|--------------|
-| **Project Library** | Designer > Project Browser > Scripting > Project Library | Internal database (project resource) | Project scope; Gateway scope if set as Gateway Scripting Project |
-| **Gateway Event Scripts** | Designer > Project Browser > Scripting > Gateway Events | Internal database (project resource) | Gateway scope (runs regardless of clients) |
-| **Web Dev Resources** | Designer > Project Browser > Web Dev | `.py` and `.json` files in `data/projects/` | HTTP endpoints |
+| **Project Library** | Designer > Project Browser > Scripting > Project Library | Internal database (project resource) | Accessible from all scripts within the same project |
+| **Gateway Event Scripts** | Designer > Project Browser > Scripting > Gateway Events | Internal database (project resource) | Gateway scope (runs regardless of clients); can access Project Library |
+| **Web Dev Resources** | Designer > Project Browser > Web Dev | `.py` and `.json` files in `data/projects/` | HTTP endpoints; can access Project Library |
 
 #### Recommended Architecture: Project Library + Gateway Timer Script
 
@@ -621,7 +622,7 @@ Project: SpotOrbitIntegration
 │   │   └── render_template()       # {{variable}} replacement
 │   │
 │   └── helpers                     ← Shared utilities
-│       ├── hostname_to_tag_path()  # spot-001 → Spot001
+│       ├── hostname_to_tag_path()  # spot-BD-12345678 → SpotBD12345678
 │       └── get_site_config()       # Read site configuration
 │
 ├── Gateway Events (Designer > Scripting > Gateway Events)
@@ -637,9 +638,22 @@ Project: SpotOrbitIntegration
             Code: webhook_handlers.handle_run_event(request)
 ```
 
-#### Gateway Scripting Project Setup
+#### Gateway Scripting Project Setup (Optional for This Project)
 
-For Gateway Timer Scripts to access Project Library modules, configure the **Gateway Scripting Project**:
+> **Important Clarification:** Gateway Event Scripts (Timer Scripts, Startup/Shutdown Scripts, etc.) defined within a project in the Designer **automatically have access to that project's script library**. You do NOT need to configure the Gateway Scripting Project setting for these scripts.
+
+**When is this setting needed?**
+
+| Script Type | Needs Gateway Scripting Project Setting? |
+|-------------|------------------------------------------|
+| Gateway Timer Scripts (in project) | ❌ No - runs in project context |
+| Gateway Startup/Shutdown Scripts (in project) | ❌ No - runs in project context |
+| Web Dev endpoints (in project) | ❌ No - runs in project context |
+| Tag Event Scripts (on individual tags) | ✅ Yes - not project-specific |
+| Expression tags with scripting | ✅ Yes - not project-specific |
+| Scripts in Tag Change events | ✅ Yes - not project-specific |
+
+**If you DO need it** (e.g., using Tag Event Scripts that call your Project Library):
 
 1. Open Gateway webpage: `http://localhost:8088`
 2. Navigate to **Config > Gateway Settings**
@@ -647,7 +661,7 @@ For Gateway Timer Scripts to access Project Library modules, configure the **Gat
 4. Enter your project name: `SpotOrbitIntegration`
 5. Click **Save Changes**
 
-> **Note:** Per [Ignition documentation](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library#gateway-scripting-project), this allows Gateway-scoped resources (like Tag Event Scripts) to access your Project Library. Gateway Event Scripts defined in the Designer don't need this setting—they're project resources that already have access.
+> **Reference:** [Gateway Scripting Project documentation](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library#gateway-scripting-project)
 
 #### Important Best Practices from Documentation
 
@@ -666,9 +680,8 @@ For Gateway Timer Scripts to access Project Library modules, configure the **Gat
 SpotRobot (UDT Definition)
 │
 ├── [Parameters] ← Configure per instance, referenced in member tags
-│   ├── RobotHostname       : String   -- e.g., "spot-001"
+│   ├── RobotHostname       : String   -- e.g., "spot-BD-12345678" (must match Orbit exactly)
 │   ├── SiteId              : Int      -- FK to Sites table
-│   ├── OrbitRobotId        : String   -- Orbit API robot UUID
 │   └── PollEnabled         : Boolean  -- Enable/disable polling for this robot
 │
 ├── [Pre-defined Parameters Available] ← Built-in, no configuration needed
@@ -701,9 +714,8 @@ SpotRobot (UDT Definition)
 ```
 [default]Enterprise/Site001/Assembly/Line001/Spot001  ← Instance of SpotRobot UDT
     Parameters:
-        RobotHostname = "spot-001"
+        RobotHostname = "spot-BD-12345678"   ← Must match Orbit hostname exactly
         SiteId = 1
-        OrbitRobotId = "abc-123-def"
         PollEnabled = true
 ```
 
@@ -858,7 +870,7 @@ def _update_robot_tags(robot_data):
     hostname = robot_data.get("hostname", "")
     nickname = robot_data.get("nickname", hostname)
     
-    # Convert hostname to tag path: spot-001 → Spot001
+    # Convert nickname to tag path format: "Assembly Line Spot" → "AssemblyLineSpot"
     device_name = helpers.hostname_to_tag_path(nickname)
     tag_base = "[default]Enterprise/Site001/Assembly/Line001/{}".format(device_name)
     
@@ -906,21 +918,24 @@ Location: Designer > Project Browser > Scripting > Project Library
 Purpose: Shared utility functions
 """
 
-def hostname_to_tag_path(hostname):
+def hostname_to_tag_path(name):
     """
-    Convert robot hostname/nickname to tag path format.
+    Convert robot nickname to tag path format.
+    
+    Note: Use nickname (human-friendly name), not the Orbit hostname (spot-BD-XXXXXXXX).
     
     Examples:
-        "spot-001" → "Spot001"
+        "Assembly Line Spot" → "AssemblyLineSpot"
         "Spot 001" → "Spot001"
+        "spot-BD-12345678" → "SpotBd12345678" (avoid using hostname directly)
     
     Args:
-        hostname: Robot hostname or nickname string
+        name: Robot nickname string (preferred) or hostname
     
     Returns:
         str: Formatted tag path component
     """
-    return hostname.replace("-", "").replace(" ", "").title()
+    return name.replace("-", "").replace(" ", "").title()
 
 def get_site_config(site_id=1):
     """
@@ -1017,7 +1032,7 @@ def poll_robots():
             hostname = robot.get("hostname", "")
             nickname = robot.get("nickname", hostname)
             
-            # Build tag path: spot-001 → Spot001
+            # Build tag path from nickname: "Assembly Line Spot" → "AssemblyLineSpot"
             device_name = nickname.replace(" ", "").replace("-", "").title()
             tag_base = "{}/{}".format(SITE_TAG_BASE, device_name)
             
@@ -1870,19 +1885,18 @@ flowchart TB
 
 ### Phase 1: Foundation (Day 1-2)
 
-- [ ] Create MSSQL database and Robotics schema
-- [ ] Execute DDL scripts (Section 5.2)
-- [ ] Insert seed data - site, robot, sample rules (Section 5.3)
-- [ ] Configure Ignition MSSQL connection (`MSSQL_Robotics`)
-- [ ] Test database connection in Designer
+- [x] Create MSSQL database and Robotics schema
+- [x] Execute DDL scripts (Section 5.2)
+- [x] Insert seed data - site, robot, sample rules (Section 5.3)
+- [x] Configure Ignition MSSQL connection (`MSSQL_Robotics`)
+- [x] Test database connection in Designer
 
 ### Phase 2: Project Setup (Day 2)
 
-- [ ] Create project: `SpotOrbitIntegration`
-- [ ] **Configure Gateway Scripting Project:**
-  - Gateway webpage > Config > Gateway Settings
-  - Set Gateway Scripting Project = `SpotOrbitIntegration`
-  - Save Changes
+- [x] Create project: `SpotOrbitIntegration`
+- [x] ~~**Configure Gateway Scripting Project**~~ *(Not needed for this project)*
+  - Gateway Timer Scripts and Web Dev endpoints created within the project already have access to the Project Library
+  - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [ ] Create Project Library structure:
   - [ ] `orbit_api` - Orbit API client with reusable httpClient
   - [ ] `robot_polling` - Polling logic
@@ -1895,7 +1909,7 @@ flowchart TB
 ### Phase 3: Tags & UDT (Day 2-3)
 
 - [ ] Create SpotRobot UDT definition in Tag Browser > _types_
-- [ ] Configure UDT parameters: RobotHostname, SiteId, OrbitRobotId
+- [ ] Configure UDT parameters: RobotHostname (must match Orbit hostname), SiteId, PollEnabled
 - [ ] Create tag instance: `[default]Enterprise/Site001/Assembly/Line001/Spot001`
 - [ ] Set instance parameter values for demo robot
 
@@ -2011,5 +2025,5 @@ flowchart TB
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 1.4 (Demo MVP) - Updated with Ignition Best Practices*  
+*Version: 1.5 (Demo MVP) - Corrected Gateway Scripting Project guidance*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
