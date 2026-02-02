@@ -656,20 +656,33 @@ VALUES
 (1, 1, '550e8400-e29b-41d4-a716-446655440007', 'Inspection-Zone-D', 'PEND', SYSUTCDATETIME(), NULL, 0);
 
 -- Sample Notification History (for audit trail testing)
+-- Note: Recipients field stores actual recipients from RoboticsNotificationRecipients at send time
 INSERT INTO RoboticsNotificationHistories (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc)
 VALUES 
 -- Successfully sent notifications
-(2, 1, 'RUN_COMP', '["your.email@example.com"]', '[SUCCESS] Mission Completed: Inspection-Zone-A', 
+-- Rule 2 recipients: Operations Team (TO), Management (CC)
+(2, 1, 'RUN_COMP', 
+ '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Management"}]}', 
+ '[SUCCESS] Mission Completed: Inspection-Zone-A', 
  'Robot Assembly Line Spot completed mission Inspection-Zone-A. Duration: 15 minutes.', 1, DATEADD(MINUTE, -105, SYSUTCDATETIME())),
  
-(3, 4, 'RUN_FAIL', '["your.email@example.com"]', '[ALERT] Mission Failed: Patrol-South', 
+-- Rule 3 recipients: Operations Team (TO), Robotics Manager (CC)
+(3, 4, 'RUN_FAIL', 
+ '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Robotics Manager"}]}', 
+ '[ALERT] Mission Failed: Patrol-South', 
  'Robot Assembly Line Spot failed mission Patrol-South. Please investigate immediately.', 1, DATEADD(HOUR, -7, SYSUTCDATETIME())),
 
-(4, 3, 'RUN_COMP', '["your.email@example.com"]', '[INFO] Inspection Complete: Inspection-Zone-B', 
+-- Rule 4 recipients: Quality Team (TO), Operations Team (CC)
+(4, 3, 'RUN_COMP', 
+ '{"to":[{"email":"your.email@example.com","displayName":"Quality Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}', 
+ '[INFO] Inspection Complete: Inspection-Zone-B', 
  'Inspection mission Inspection-Zone-B completed successfully. Duration: 30 minutes.', 1, DATEADD(MINUTE, -330, SYSUTCDATETIME())),
 
 -- Failed to send (for error testing)
-(5, NULL, 'BATTERY_LOW', '["your.email@example.com"]', '[WARNING] Low Battery: Assembly Line Spot', 
+-- Rule 5 recipients: Maintenance Team (TO), Operations Team (CC)
+(5, NULL, 'BATTERY_LOW', 
+ '{"to":[{"email":"your.email@example.com","displayName":"Maintenance Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}', 
+ '[WARNING] Low Battery: Assembly Line Spot', 
  'Robot Assembly Line Spot battery is below 20%. Current level: 18%. Please recharge soon.', 0, NULL);
 
 GO
