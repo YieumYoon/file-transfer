@@ -80,6 +80,121 @@ Always check and inform the user about these modules:
 | Custom REST API | Web Dev module | Not available (polling only) |
 | Email notifications | (Built-in) | ✅ system.net.sendEmail() |
 
+### PyDataset Handling with Named Queries
+
+**CRITICAL:** Ignition Named Queries return **PyDataset** objects, NOT standard Python lists/dicts. You cannot use normal Python operations on them.
+
+#### Common Mistakes
+
+❌ **WRONG:**
+```python
+result = system.db.runNamedQuery("GetSiteConfig", {"site_id": 1})
+if result and len(result) > 0:
+    return dict(result[0])  # ERROR: dict() doesn't work on PyDataset rows
+```
+
+✅ **CORRECT:**
+```python
+result = system.db.runNamedQuery("GetSiteConfig", {"site_id": 1})
+if result and result.getRowCount() > 0:
+    # Convert PyDataset row to dictionary manually
+    config = {}
+    for i in range(result.getColumnCount()):
+        col_name = result.getColumnName(i)
+        config[col_name] = result.getValueAt(0, i)
+    return config
+```
+
+#### PyDataset API Reference
+
+| Operation | ❌ Don't Use | ✅ Use Instead |
+|-----------|--------------|----------------|
+| Row count | `len(dataset)` | `dataset.getRowCount()` |
+| Column count | N/A | `dataset.getColumnCount()` |
+| Column names | N/A | `dataset.getColumnName(index)` |
+| Get value | `dataset[row][col]` | `dataset.getValueAt(row, col)` or `dataset.getValueAt(row, "ColName")` |
+| Iterate rows | `for row in dataset:` | Works, but `row` is not a dict! |
+| Convert to dict | `dict(row)` | Manual loop with `getValueAt()` |
+
+#### Correct Patterns for Common Operations
+
+**Pattern 1: Single Row to Dictionary**
+```python
+result = system.db.runNamedQuery("GetRobotByHostname", {"hostname": "spot-01"})
+if result and result.getRowCount() > 0:
+    robot = {}
+    for i in range(result.getColumnCount()):
+        robot[result.getColumnName(i)] = result.getValueAt(0, i)
+    return robot
+return None
+```
+
+**Pattern 2: Multiple Rows to List of Dictionaries**
+```python
+result = system.db.runNamedQuery("GetAllRobots", {"site_id": 1})
+robots = []
+for row_idx in range(result.getRowCount()):
+    robot = {}
+    for col_idx in range(result.getColumnCount()):
+        col_name = result.getColumnName(col_idx)
+        robot[col_name] = result.getValueAt(row_idx, col_idx)
+    robots.append(robot)
+return robots
+```
+
+**Pattern 3: Iterate with PyDataset Row Objects**
+```python
+result = system.db.runNamedQuery("GetNotificationRules", params)
+for rule in result:  # rule is a PyDataset row object
+    # Access by column name (recommended)
+    rule_id = rule["NotificationRuleId"]
+    pattern = rule["MissionNamePattern"]
+    
+    # Note: rule is NOT a dict, but supports [] access
+```
+
+**Pattern 4: Check for Results**
+```python
+result = system.db.runNamedQuery("GetRecipients", {"rule_id": 5})
+
+# ❌ WRONG
+if not result or len(result) == 0:
+    return
+
+# ✅ CORRECT
+if not result or result.getRowCount() == 0:
+    return
+```
+
+#### Why This Matters
+
+1. **`dict(row)` fails silently** - doesn't convert PyDataset rows properly
+2. **`len()` may not work** - PyDataset doesn't always support Python's `len()`
+3. **`getValueAt(0, 1)` bug** - using wrong index in comprehensions copies same column repeatedly
+4. **Loop variable confusion** - `for row in dataset:` gives PyDataset row, not dict
+
+#### Testing PyDataset Code
+
+Always test Named Query code with real queries. Dictionary conversion bugs won't show up until runtime.
+
+```python
+# Test in Script Console
+result = system.db.runNamedQuery("GetSiteConfig", {"site_id": 1})
+print "Row count:", result.getRowCount()
+print "Column count:", result.getColumnCount()
+print "Columns:", [result.getColumnName(i) for i in range(result.getColumnCount())]
+print "First row:", result.getValueAt(0, 0), result.getValueAt(0, 1)
+```
+
+#### Historical Context
+
+This mistake appeared in `ignition-spot-simple-plan.md` v2.7 and was fixed in v2.11:
+- `get_site_config()`: Used `dict(result[0])` - failed to convert
+- `evaluate_and_send()`: Used `getValueAt(0, 1)` instead of `getValueAt(0, i)` - copied wrong column
+- Test verification functions: Used `len(ds)` instead of `ds.getRowCount()`
+
+**Prevention:** Always use PyDataset methods (`getRowCount()`, `getValueAt()`, etc.) when working with Named Query results.
+
 ---
 
 ## Document Update Protocol
@@ -241,5 +356,6 @@ Before proposing any Ignition architecture:
 ---
 
 *Created: 2026-02-03*  
-*Context: After v2.7 → v2.8 architecture refactor (webhook → polling)*  
+*Last Updated: 2026-02-03*  
+*Context: After v2.7 → v2.8 architecture refactor (webhook → polling) + PyDataset conversion fixes (v2.11)*  
 *Purpose: Prevent similar issues in future agent interactions*

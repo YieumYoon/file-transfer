@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.10 (Demo) - Polling-Based Architecture  
+**Version:** 2.11 (Demo) - Polling-Based Architecture  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
@@ -15,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.11** | 2026-02-03 | **Enhanced Logging for Monitoring and Troubleshooting**<br>• Added comprehensive logging to all database query operations (UpsertRun, GetSiteConfig, GetRunNotificationContext, GetNotificationRules, GetNotificationRecipients, InsertNotificationHistory)<br>• Enhanced logging in `poll_recent_runs()`: API fetch start, run counts, status change detection<br>• Enhanced logging in `handle_run_event()`: event details, status mapping, warnings for unknown statuses<br>• Enhanced logging in `_update_mission_tags()`: tag write counts, success/error summaries<br>• Enhanced logging in `evaluate_and_send()`: rule evaluation, recipient matching, pattern validation<br>• Added new section 7.5: Logging Reference with logger hierarchy, recommended levels, sample messages, and troubleshooting guide<br>• Loggers now track: query parameters, row counts, status changes, API responses, notification matching, email sending<br>• **Why:** Makes it easy to monitor system status and troubleshoot issues in production |
 | **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early |
 | **2.9** | 2026-02-03 | **Orbit API Status Value Fix**<br>• Fixed `status_map` and `trigger_type_map` in `run_event_handlers` module to handle Orbit API's actual status values<br>• Added `"success": "COMP"` mapping - Orbit API returns "success" for completed runs, not "completed"<br>• Added `"success": "RUN_COMP"` to trigger type mapping for proper notification routing<br>• Previously caused "Unhandled run status for trigger mapping: success" warning and incorrect tag values<br>• Tags were being written with wrong status code ("PEND" instead of "COMP")<br>• **Why:** Orbit API documentation and actual response values differ; "success" is the real completed status |
 | **2.8** | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost |
@@ -1167,6 +1168,8 @@ def poll_recent_runs():
     logger = system.util.getLogger("orbit.runs_polling")
     
     try:
+        logger.debug("Starting runs poll from Orbit API (limit=50)")
+        
         # Fetch recent runs from Orbit API
         runs = orbit_api.get_runs(limit=50)
         
@@ -1174,15 +1177,19 @@ def poll_recent_runs():
             logger.debug("No runs returned from API")
             return
         
+        logger.info("Fetched {} run(s) from Orbit API".format(len(runs)))
+        
         # Process each run and detect changes
         changed_count = 0
         for run in runs:
             run_uuid = run.get("uuid", "")
             if not run_uuid:
+                logger.warn("Skipping run with no UUID")
                 continue
             
             # Check if this run's status has changed
             if _has_status_changed(run):
+                logger.debug("Status change detected for run: {}".format(run_uuid))
                 # Status changed - trigger full event processing
                 _process_run_event(run)
                 changed_count += 1
@@ -1190,9 +1197,10 @@ def poll_recent_runs():
         _last_poll_time = system.date.now()
         
         if changed_count > 0:
-            logger.info("Processed {} run status changes".format(changed_count))
+            logger.info("Poll complete: processed {} run status change(s) out of {} runs".format(
+                changed_count, len(runs)))
         else:
-            logger.debug("No status changes detected")
+            logger.debug("Poll complete: no status changes detected ({} runs checked)".format(len(runs)))
         
     except Exception as e:
         logger.error("Runs polling failed: {}".format(str(e)))
@@ -1209,9 +1217,11 @@ def _has_status_changed(run):
         bool: True if this is a new run or status changed
     """
     global _previous_run_states
+    logger = system.util.getLogger("orbit.runs_polling.change_detection")
     
     run_uuid = run.get("uuid", "")
     current_status = run.get("missionStatus", "")
+    mission_name = run.get("missionName", "")
     
     # Get previous state for this run
     previous = _previous_run_states.get(run_uuid)
@@ -1222,10 +1232,14 @@ def _has_status_changed(run):
             "status": current_status,
             "processed_at": system.date.now()
         }
+        logger.info("New run detected: {} - {} (status: {})".format(
+            run_uuid[:8], mission_name, current_status))
         return True
     
     if previous["status"] != current_status:
         # Status changed
+        logger.info("Status change detected for {}: {} -> {}".format(
+            run_uuid[:8], previous["status"], current_status))
         _previous_run_states[run_uuid] = {
             "status": current_status,
             "processed_at": system.date.now()
@@ -1246,6 +1260,10 @@ def _process_run_event(run):
     """
     logger = system.util.getLogger("orbit.runs_polling.process")
     
+    run_uuid = run.get("uuid", "")
+    mission_name = run.get("missionName", "")
+    robot_hostname = run.get("robotHostname", "")
+    
     # Map Orbit status to event type
     orbit_status = run.get("missionStatus", "").lower()
     status_to_event = {
@@ -1262,16 +1280,19 @@ def _process_run_event(run):
     }
     event_type = status_to_event.get(orbit_status, "run.started")
     
+    logger.debug("Processing run event: uuid={}, mission={}, status={}, event_type={}".format(
+        run_uuid[:8], mission_name, orbit_status, event_type))
+    
     # Build payload in same format as webhook would send
     # This allows run_event_handlers to work with both polling and webhooks
     payload = {
         "type": event_type,
         "data": {
-            "uuid": run.get("uuid", ""),
-            "missionName": run.get("missionName", ""),
+            "uuid": run_uuid,
+            "missionName": mission_name,
             "status": orbit_status,
             "robot": {
-                "hostname": run.get("robotHostname", "")
+                "hostname": robot_hostname
             }
         }
     }
@@ -1279,13 +1300,11 @@ def _process_run_event(run):
     try:
         # Delegate to run_event_handlers (same logic as webhook would use)
         run_event_handlers.handle_run_event(payload)
-        logger.info("Processed run event: {} - {}".format(
-            run.get("missionName", ""), event_type
-        ))
+        logger.info("Successfully processed run event: {} - {} ({})".format(
+            mission_name, event_type, orbit_status))
     except Exception as e:
-        logger.error("Failed to process run {}: {}".format(
-            run.get("uuid", ""), str(e)
-        ))
+        logger.error("Failed to process run {} ({}): {}".format(
+            run_uuid[:8], mission_name, str(e)))
 
 def _update_mission_tags(hostname, run_data):
     """
@@ -1564,14 +1583,29 @@ def get_site_config(site_id=1):
     Returns:
         dict: Site configuration or None if not found
     """
-    result = system.db.runNamedQuery(
-        "GetSiteConfig", 
-        {"site_id": site_id}
-    )
+    logger = system.util.getLogger("orbit.database")
+    logger.debug("Querying site config for site_id={}".format(site_id))
     
-    if result and len(result) > 0:
-        return dict(result[0])
-    return None
+    try:
+        result = system.db.runNamedQuery(
+            "GetSiteConfig", 
+            {"site_id": site_id}
+        )
+        
+        if result and result.getRowCount() > 0:
+            # Convert PyDataset row to dictionary
+            config = {}
+            for i in range(result.getColumnCount()):
+                col_name = result.getColumnName(i)
+                config[col_name] = result.getValueAt(0, i)
+            logger.info("Site config retrieved successfully for site_id={}".format(site_id))
+            return config
+        else:
+            logger.warn("No site config found for site_id={}".format(site_id))
+            return None
+    except Exception as e:
+        logger.error("Failed to get site config for site_id={}: {}".format(site_id, str(e)))
+        return None
 ```
 
 ### 6.6 Gateway Timer Script: RunsPolling
@@ -1690,6 +1724,9 @@ def handle_run_event(payload):
     status = run_data.get("status", "")  # started, completed, failed
     robot_hostname = run_data.get("robot", {}).get("hostname", "")
     
+    logger.info("Processing run event: uuid={}, mission={}, status={}, robot={}".format(
+        run_uuid, mission_name, status, robot_hostname))
+    
     # Map Orbit status to our codes
     # Note: Orbit API returns "success" for completed runs, not "completed"
     status_map = {
@@ -1700,6 +1737,9 @@ def handle_run_event(payload):
         "pending": "PEND"
     }
     mission_status_code = status_map.get(status, "PEND")
+    
+    if status not in status_map:
+        logger.warn("Unknown status '{}' for run {}, defaulting to PEND".format(status, run_uuid))
     
     # 1. Upsert to database using Named Query
     _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname)
@@ -1732,6 +1772,9 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
     logger = system.util.getLogger("orbit.run_event.db")
     
     try:
+        logger.debug("Upserting run: uuid={}, mission={}, status={}, robot={}".format(
+            run_uuid, mission_name, status_code, robot_hostname))
+        
         # Use Named Query for secure, maintainable database access
         rows_affected = system.db.runNamedQuery(
             "UpsertRun",
@@ -1742,14 +1785,18 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
                 "robot_hostname": robot_hostname
             }
         )
-        logger.debug("Upserted run {}: {} rows affected".format(run_uuid, rows_affected))
+        
+        logger.info("Upserted run {} successfully: {} rows affected".format(run_uuid, rows_affected))
     except Exception as e:
-        logger.error("Failed to upsert run: {}".format(str(e)))
+        logger.error("Failed to upsert run {}: {}".format(run_uuid, str(e)))
 
 
 def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     """Update mission-related tags for the robot."""
     logger = system.util.getLogger("orbit.run_event.tags")
+    
+    logger.debug("Updating mission tags for robot={}, run={}, status={}".format(
+        robot_hostname, run_uuid, status_code))
     
     # Get tag base path using helper (supports both demo and production modes)
     tag_base = helpers.get_robot_tag_base(robot_hostname)
@@ -1766,12 +1813,20 @@ def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     
     values = [run_uuid, mission_name, status_code, system.date.now()]
     
+    logger.debug("Writing {} tag(s) to tag base: {}".format(len(tags), tag_base))
     results = system.tag.writeBlocking(tags, values)
     
     # Check for write errors
+    errors = 0
     for i, result in enumerate(results):
         if not result.isGood():
             logger.error("Failed to write {}: {}".format(tags[i], result.getName()))
+            errors += 1
+    
+    if errors == 0:
+        logger.info("Successfully updated {} tag(s) for robot {}".format(len(tags), robot_hostname))
+    else:
+        logger.error("Tag update completed with {} error(s) for robot {}".format(errors, robot_hostname))
 ```
 
 ### 6.10 Project Library: notification_engine Module
@@ -1828,18 +1883,26 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
         robot_hostname: Robot hostname
     """
     logger = system.util.getLogger("orbit.notification")
+    logger.info("Evaluating notifications: trigger={}, run={}, mission={}, status={}".format(
+        trigger_type, run_uuid, mission_name, status_code))
     
     # Optional but recommended: enrich templates with DB-backed context (times, duration, nickname, tag path).
     # This avoids relying on placeholders that aren't available in the webhook payload.
     ctx = None
     try:
+        logger.debug("Querying notification context for run={}".format(run_uuid))
         ctx_ds = system.db.runNamedQuery("GetRunNotificationContext", {"run_uuid": run_uuid})
-        if ctx_ds and len(ctx_ds) > 0:
-            # Convert PydataSet row to dictionary
-            # ctx_ds[0] is a row, need to extract by column name
-            ctx = {ctx_ds.getColumnName(i): ctx_ds.getValueAt(0,1) for i in range(ctx_ds.columnCount)}
+        if ctx_ds and ctx_ds.getRowCount() > 0:
+            # Convert PyDataset row to dictionary
+            ctx = {}
+            for i in range(ctx_ds.getColumnCount()):
+                col_name = ctx_ds.getColumnName(i)
+                ctx[col_name] = ctx_ds.getValueAt(0, i)
+            logger.debug("Notification context retrieved for run={}".format(run_uuid))
+        else:
+            logger.warn("No notification context found for run={}".format(run_uuid))
     except Exception as e:
-        logger.warn("GetRunNotificationContext failed for {}: {}".format(run_uuid, str(e)))
+        logger.error("GetRunNotificationContext failed for {}: {}".format(run_uuid, str(e)))
     
     battery_level = None
     try:
@@ -1851,36 +1914,57 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
     
     # Get matching rules using Named Query
     # Returns all matching rules ordered by Priority ASC (highest priority first)
+    logger.debug("Querying notification rules: trigger={}, status={}".format(trigger_type, status_code))
     rules = system.db.runNamedQuery(
         "GetNotificationRules",
         {"trigger_type_code": trigger_type, "status_code": status_code}
     )
+    
+    if not rules or rules.getRowCount() == 0:
+        logger.info("No notification rules found for trigger={}, status={}".format(trigger_type, status_code))
+        return
+    
+    logger.info("Found {} notification rule(s) for trigger={}, status={}".format(
+        rules.getRowCount(), trigger_type, status_code))
     
     # Phase 2: Process ALL matching rules
     # For Phase 1 (simple): Replace loop with: if rules and len(rules) > 0: rule = rules[0]
     for rule in rules:
         rule_id = rule["NotificationRuleId"]
         pattern = rule["MissionNamePattern"]
+        rule_name = rule.get("RuleName", "Rule #{}".format(rule_id))
+        
+        logger.debug("Processing rule: {} (id={})".format(rule_name, rule_id))
         
         # Check mission name pattern match
         if pattern and pattern.replace("%", "") not in mission_name:
+            logger.debug("Rule {} skipped - mission name '{}' doesn't match pattern '{}'".format(
+                rule_id, mission_name, pattern))
             continue
         
         # Get recipients
+        logger.debug("Querying recipients for rule_id={}".format(rule_id))
         recipients = system.db.runNamedQuery(
             "GetNotificationRecipients",
             {"rule_id": rule_id}
         )
         
-        if not recipients or len(recipients) == 0:
+        if not recipients or recipients.getRowCount() == 0:
+            logger.warn("Rule {} has no recipients, skipping".format(rule_id))
             continue
+        
+        logger.debug("Rule {} has {} recipient(s)".format(rule_id, recipients.getRowCount()))
         
         # Build recipient lists
         to_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "to"]
         cc_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "cc"]
         
         if not to_list:
+            logger.warn("Rule {} has no TO recipients, skipping".format(rule_id))
             continue
+        
+        logger.info("Rule {} matched - sending to {} recipient(s) (TO: {}, CC: {})".format(
+            rule_id, len(to_list) + len(cc_list), len(to_list), len(cc_list)))
         
         # Render templates
         template_vars = {
@@ -1962,7 +2046,10 @@ def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, bo
 
 def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body, is_sent, error_msg):
     """Log notification to history table using Named Query."""
+    logger = system.util.getLogger("orbit.notification.log")
     try:
+        logger.debug("Logging notification history: rule_id={}, run={}, sent={}".format(
+            rule_id, run_uuid, is_sent))
         system.db.runNamedQuery(
             "InsertNotificationHistory",
             {
@@ -1976,10 +2063,9 @@ def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body
                 "error_message": error_msg
             }
         )
+        logger.debug("Notification history logged successfully for run={}".format(run_uuid))
     except Exception as e:
-        system.util.getLogger("orbit.notification.log").error(
-            "Failed to log notification: {}".format(str(e))
-        )
+        logger.error("Failed to log notification history for run={}: {}".format(run_uuid, str(e)))
 ```
 
 #### Notification Engine Scaling Guide
@@ -2511,9 +2597,14 @@ def verify_test_results(run_uuid):
             [run_uuid],
             database="MSSQL_Robotics"
         )
-        if ds and len(ds) > 0:
+        if ds and ds.getRowCount() > 0:
             results["database_check"] = True
-            results["database_record"] = dict(ds[0])
+            # Convert PyDataset row to dictionary
+            record = {}
+            for i in range(ds.getColumnCount()):
+                col_name = ds.getColumnName(i)
+                record[col_name] = ds.getValueAt(0, i)
+            results["database_record"] = record
         else:
             results["errors"].append("Run not found in database")
     except Exception as e:
@@ -2541,9 +2632,9 @@ def verify_test_results(run_uuid):
             [run_uuid],
             database="MSSQL_Robotics"
         )
-        if ds and len(ds) > 0:
+        if ds and ds.getRowCount() > 0:
             results["notification_check"] = True
-            results["notifications_sent"] = len(ds)
+            results["notifications_sent"] = ds.getRowCount()
         else:
             results["notification_check"] = True  # OK if no rules matched
             results["notifications_sent"] = 0
@@ -3288,6 +3379,166 @@ flowchart TB
 1. **Filter Bar**: Date range picker, Status dropdown
 2. **Table**: Named Query binding to `GetMissionHistory`
 3. **Row Click**: Opens `MissionDetail` popup
+
+---
+
+## 7.5 Logging Reference
+
+This section documents all logger names used in the system and what they monitor. Use these logger names in the Gateway > Config > Logging page to adjust log levels for troubleshooting.
+
+### 7.5.1 Logger Hierarchy
+
+| Logger Name | Module | Purpose | Key Events Logged |
+|-------------|--------|---------|-------------------|
+| `orbit.api.robots` | `orbit_api` | Orbit API - Robot configuration queries | API calls to `/api/v0/robots`, response validation, robot filtering |
+| `orbit.api.runs` | `orbit_api` | Orbit API - Mission runs queries | API calls to `/api/v0/runs`, parameter usage, response processing |
+| `orbit.api.anomalies` | `orbit_api` | Orbit API - Anomaly queries | API calls to `/api/v0/anomalies`, filtering, results |
+| `orbit.runs_polling` | `runs_polling` | Main polling loop | Poll start/completion, run counts, change detection summary |
+| `orbit.runs_polling.change_detection` | `runs_polling` | Status change detection | New runs detected, status changes (old → new), no changes |
+| `orbit.runs_polling.process` | `runs_polling` | Run event processing delegation | Event type mapping, payload building, delegation to handlers |
+| `orbit.runs_polling.tags` | `runs_polling` | Tag updates from polling | Tag path resolution, write operations, error details |
+| `orbit.run_event` | `run_event_handlers` | Run event handling | Event reception, status mapping, processing flow |
+| `orbit.run_event.db` | `run_event_handlers` | Database upsert operations | UpsertRun query execution, parameters, rows affected, errors |
+| `orbit.run_event.tags` | `run_event_handlers` | Tag updates from events | Tag path resolution, write operations, success/failure counts |
+| `orbit.notification` | `notification_engine` | Notification evaluation | Rule evaluation start, context retrieval, rule matching summary |
+| `orbit.notification.send` | `notification_engine` | Email sending | Email send attempts, SMTP details, TEST_MODE behavior, failures |
+| `orbit.notification.log` | `notification_engine` | Notification history logging | InsertNotificationHistory query execution, success/errors |
+| `orbit.database` | `helpers` | Database configuration queries | GetSiteConfig queries, results, connection issues |
+| `helpers` | `helpers` | Tag path resolution | Tag path lookups (database vs. demo mode), robot hostname mapping |
+
+### 7.5.2 Recommended Log Levels for Different Scenarios
+
+#### Development & Initial Setup
+```
+orbit.* = DEBUG
+```
+Shows all details including query parameters, status changes, and processing steps.
+
+#### Normal Operations
+```
+orbit.* = INFO
+```
+Shows important events like status changes, notifications sent, and API poll summaries. Minimal noise.
+
+#### Troubleshooting API Issues
+```
+orbit.api.* = DEBUG
+orbit.runs_polling = DEBUG
+```
+Detailed API request/response logging, parameter usage, and validation.
+
+#### Troubleshooting Notifications
+```
+orbit.notification = DEBUG
+orbit.notification.send = DEBUG
+orbit.database = DEBUG
+```
+Shows rule evaluation, recipient matching, template rendering, and email sending details.
+
+#### Troubleshooting Database Issues
+```
+orbit.run_event.db = DEBUG
+orbit.database = DEBUG
+orbit.notification.log = DEBUG
+```
+Shows all Named Query executions with parameters and results.
+
+#### Troubleshooting Tag Updates
+```
+orbit.run_event.tags = DEBUG
+orbit.runs_polling.tags = DEBUG
+helpers = DEBUG
+```
+Shows tag path resolution, write operations, and error details.
+
+#### Production (Minimal Logging)
+```
+orbit.* = WARN
+```
+Only logs warnings and errors. Use for production environments where INFO logs would generate too much data.
+
+### 7.5.3 Sample Log Messages by Level
+
+#### INFO Level (Normal Operations)
+```
+orbit.runs_polling | Fetched 25 run(s) from Orbit API
+orbit.runs_polling | Poll complete: processed 2 run status change(s) out of 25 runs
+orbit.runs_polling.change_detection | New run detected: 12345678 - Patrol A (status: running)
+orbit.runs_polling.change_detection | Status change detected for 87654321: running -> success
+orbit.run_event | Processing run event: uuid=12345678, mission=Patrol A, status=success, robot=spot-BD-12345678
+orbit.run_event.db | Upserted run 12345678 successfully: 1 rows affected
+orbit.run_event.tags | Successfully updated 4 tag(s) for robot spot-BD-12345678
+orbit.notification | Evaluating notifications: trigger=RUN_COMP, run=12345678, mission=Patrol A, status=COMP
+orbit.notification | Found 2 notification rule(s) for trigger=RUN_COMP, status=COMP
+orbit.notification.send | Sent notification: [SUCCESS] Mission Patrol A Completed
+```
+
+#### DEBUG Level (Detailed Troubleshooting)
+```
+orbit.runs_polling | Starting runs poll from Orbit API (limit=50)
+orbit.runs_polling.process | Processing run event: uuid=12345678, mission=Patrol A, status=success, event_type=run.completed
+orbit.run_event.db | Upserting run: uuid=12345678, mission=Patrol A, status=COMP, robot=spot-BD-12345678
+orbit.run_event.tags | Updating mission tags for robot=spot-BD-12345678, run=12345678, status=COMP
+orbit.run_event.tags | Writing 4 tag(s) to tag base: [default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678
+orbit.notification | Querying notification context for run=12345678
+orbit.notification | Notification context retrieved for run=12345678
+orbit.notification | Querying notification rules: trigger=RUN_COMP, status=COMP
+orbit.notification | Processing rule: Critical Alerts (id=5)
+orbit.notification | Querying recipients for rule_id=5
+orbit.notification | Rule 5 has 3 recipient(s)
+orbit.notification | Rule 5 matched - sending to 3 recipient(s) (TO: 2, CC: 1)
+orbit.notification.log | Logging notification history: rule_id=5, run=12345678, sent=True
+```
+
+#### WARN Level (Potential Issues)
+```
+orbit.runs_polling | Skipping run with no UUID
+orbit.run_event | Unknown status 'cancelled' for run 12345678, defaulting to PEND
+orbit.notification | No notification context found for run=12345678
+orbit.notification | Rule 7 has no recipients, skipping
+orbit.notification | Rule 8 has no TO recipients, skipping
+orbit.database | No site config found for site_id=1
+helpers | Tag path not found for robot: spot-unknown
+```
+
+#### ERROR Level (Critical Failures)
+```
+orbit.runs_polling | Runs polling failed: Connection refused
+orbit.run_event.db | Failed to upsert run 12345678: Named Query 'UpsertRun' not found
+orbit.run_event.tags | Cannot update tags: tag path not found for robot spot-BD-12345678
+orbit.run_event.tags | Failed to write [default]Enterprise/.../MissionId: Bad_Stale
+orbit.notification | GetRunNotificationContext failed for 12345678: SQL timeout
+orbit.notification.send | Failed to send notification: SMTP connection timeout
+orbit.notification.log | Failed to log notification history for run=12345678: Database connection lost
+orbit.database | Failed to get site config for site_id=1: Query timeout
+```
+
+### 7.5.4 Using Logs for Troubleshooting
+
+| Problem | Logs to Check | What to Look For |
+|---------|---------------|------------------|
+| Polling not working | `orbit.runs_polling` at INFO | "Starting runs poll" messages every 60s |
+| API not returning data | `orbit.api.*` at DEBUG | API request parameters, response status codes |
+| Status changes not detected | `orbit.runs_polling.change_detection` at INFO | "New run detected" or "Status change detected" messages |
+| Database not updating | `orbit.run_event.db` at DEBUG | "Upserting run" with parameters, rows affected |
+| Tags not updating | `orbit.run_event.tags` at DEBUG | Tag paths being written, write results |
+| Notifications not sending | `orbit.notification` at DEBUG | Rule matching, recipient counts, email send attempts |
+| Wrong recipients getting emails | `orbit.notification` at DEBUG | Rule evaluation, pattern matching, recipient queries |
+| Email send failures | `orbit.notification.send` at DEBUG | SMTP host, from address, error messages |
+
+### 7.5.5 Log Configuration in Gateway
+
+To configure log levels:
+
+1. Navigate to: **Gateway > Config > Logging**
+2. Scroll to **Logger Settings** section
+3. Click **Add Logger**
+4. Enter logger name (e.g., `orbit.notification`)
+5. Select log level (DEBUG, INFO, WARN, ERROR)
+6. Click **Save Changes**
+7. Check logs in: **Gateway > Status > Logs > Wrapper Log**
+
+**Tip:** Use wildcard patterns like `orbit.*` to set level for all orbit loggers at once.
 
 ---
 
