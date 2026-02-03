@@ -1,8 +1,8 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.3 (Demo) - Notification Rules Scalability Design Documentation  
-**Last Updated:** 2026-02-02
+**Version:** 2.4 (Demo) - Named Query Default Value Handling Documentation  
+**Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
 > - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.4** | 2026-02-03 | **Named Query Default Value Handling Documentation**<br>• Added critical warning: Ignition 8.1 Named Queries do NOT have built-in default value feature<br>• Documented two approaches for handling defaults: Calling Code vs SQL COALESCE<br>• Updated all parameter tables to clarify "Recommended Default" vs "Required" columns<br>• Added SQL COALESCE() fallbacks to queries (`GetAllRobots`, `GetSiteConfig`, `GetMissionHistory`)<br>• Enhanced "Calling Named Queries from Scripts" section with proper default handling patterns<br>• Added helper function examples showing best practices for wrapping Named Queries<br>• Corrects common misconception about Named Query parameter configuration |
 | **2.3** | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems |
 | **2.2** | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping |
 | **2.1** | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12 |
@@ -2527,6 +2528,35 @@ performance_test(20)
 
 **Important:** Always use **Value Parameters** (`:paramName`) for user-provided values. They act like prepared statements and prevent SQL injection.
 
+#### Handling Default Values
+
+> ⚠️ **Ignition 8.1 Limitation:** Named Queries in Ignition 8.1 do **NOT** have a built-in default value feature in the parameter configuration UI. All parameters must be explicitly provided when calling the query.
+
+**Two approaches to handle defaults:**
+
+| Approach | Where | When to Use | Example |
+|----------|-------|-------------|---------|
+| **Calling Code** | Python script | Simple defaults, flexibility needed | `params = {"site_id": site_id or 1}` |
+| **SQL COALESCE** | In the query | Database-level guarantee, NULL handling | `WHERE r.SiteId = COALESCE(:site_id, 1)` |
+
+**Recommended Pattern:** Apply defaults in calling code for clarity and flexibility:
+
+```python
+# Helper function with documented defaults
+def get_all_robots(site_id=1):
+    """Get all active robots for a site.
+    
+    Args:
+        site_id: Site ID (default: 1)
+    """
+    return system.db.runNamedQuery(
+        "Robotics/GetAllRobots",
+        {"site_id": site_id}
+    )
+```
+
+**Note:** The "Recommended Default" column in parameter tables below indicates values that **calling code should provide** when the parameter is optional. These are NOT Ignition-configured defaults.
+
 #### Named Query List
 
 | Query Name | Type | Description | Parameters |
@@ -2549,12 +2579,13 @@ performance_test(20)
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
+| Name | Type | Recommended Default |
+|------|------|---------------------|
 | site_id | Int4 | 1 |
 
 ```sql
 -- Named Query: GetAllRobots
+-- Note: Calling code should provide site_id (recommend default: 1)
 SELECT
     r.RobotId,
     r.SiteId,
@@ -2564,7 +2595,7 @@ SELECT
     r.IsActive,
     r.LastSeenAtUtc
 FROM RoboticsRobots r
-WHERE r.SiteId = :site_id
+WHERE r.SiteId = COALESCE(:site_id, 1)
   AND r.IsActive = 1
 ORDER BY COALESCE(r.Nickname, r.Hostname) ASC;
 ```
@@ -2576,9 +2607,9 @@ ORDER BY COALESCE(r.Nickname, r.Hostname) ASC;
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| hostname | String | (required) |
+| Name | Type | Required |
+|------|------|----------|
+| hostname | String | Yes |
 
 ```sql
 -- Named Query: GetRobotByHostname
@@ -2603,9 +2634,9 @@ ORDER BY r.RobotId DESC;
 **Purpose:** Used in production/multi-site mode to retrieve robot's tag base path from database
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| hostname | String | (required) |
+| Name | Type | Required |
+|------|------|----------|
+| hostname | String | Yes |
 
 **Usage:** Called by `helpers.get_robot_tag_base()` when `USE_DATABASE_FOR_TAG_PATHS = True`
 
@@ -2633,12 +2664,13 @@ ORDER BY r.RobotId DESC;
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
+| Name | Type | Recommended Default |
+|------|------|---------------------|
 | site_id | Int4 | 1 |
 
 ```sql
 -- Named Query: GetSiteConfig
+-- Note: Calling code should provide site_id (recommend default: 1)
 -- SmtpHost/FromAddr are nullable; Python code falls back to defaults if NULL.
 SELECT TOP 1
     s.SiteId,
@@ -2649,7 +2681,7 @@ SELECT TOP 1
     s.SmtpHost,
     s.FromAddr
 FROM RoboticsSites s
-WHERE s.SiteId = :site_id
+WHERE s.SiteId = COALESCE(:site_id, 1)
   AND s.IsActive = 1
 ORDER BY s.SiteId DESC;
 ```
@@ -2661,10 +2693,10 @@ ORDER BY s.SiteId DESC;
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| trigger_type_code | String | (required) |
-| status_code | String | null |
+| Name | Type | Required | Notes |
+|------|------|----------|-------|
+| trigger_type_code | String | Yes | e.g., `RUN_START`, `RUN_COMP`, `RUN_FAIL` |
+| status_code | String | No | Pass `None` to match all statuses |
 
 ```sql
 -- Named Query: GetNotificationRules
@@ -2738,9 +2770,9 @@ This query intentionally returns **all matching rules** (no `TOP 1` limit) to en
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| run_uuid | String | (required) |
+| Name | Type | Required |
+|------|------|----------|
+| run_uuid | String | Yes |
 
 ```sql
 -- Named Query: GetRunNotificationContext
@@ -2767,17 +2799,17 @@ ORDER BY r.RunId DESC;
 **Type:** Update Query  
 **Database:** MSSQL_Robotics
 
-**Parameters (recommended):**
-| Name | Type | Default |
-|------|------|---------|
-| rule_id | Int4 | null |
-| run_uuid | String | null |
-| trigger_type_code | String | (required) |
-| recipients | String | null |
-| subject | String | (required) |
-| body | String | null |
-| is_sent | Int1 | 0 |
-| error_message | String | null |
+**Parameters:**
+| Name | Type | Required | Notes |
+|------|------|----------|-------|
+| rule_id | Int4 | No | FK to NotificationRules, pass `None` if unknown |
+| run_uuid | String | No | FK lookup to Runs, pass `None` if not run-related |
+| trigger_type_code | String | Yes | e.g., `RUN_START`, `RUN_COMP`, `RUN_FAIL` |
+| recipients | String | No | Comma-separated email addresses |
+| subject | String | Yes | Email subject line |
+| body | String | No | Email body content |
+| is_sent | Int1 | No | Pass `1` if sent, `0` if failed (calling code must provide) |
+| error_message | String | No | Error details if send failed |
 
 ```sql
 -- Named Query: InsertNotificationHistory
@@ -2814,16 +2846,17 @@ VALUES
 **Caching:** None (real-time data)
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| site_id | Int4 | 1 |
-| start_date | DateTime | null |
-| end_date | DateTime | null |
-| limit | Int4 | 100 |
+| Name | Type | Required | Recommended Default |
+|------|------|----------|---------------------|
+| site_id | Int4 | Yes | 1 |
+| start_date | DateTime | No | `None` (no filter) |
+| end_date | DateTime | No | `None` (no filter) |
+| limit | Int4 | Yes | 100 |
 
 ```sql
 -- Named Query: GetMissionHistory
 -- All parameters use Value Parameter syntax (:param) for SQL injection protection
+-- Note: Calling code must provide site_id and limit; use COALESCE for safety
 SELECT 
     r.RunId,
     r.MissionName,
@@ -2836,11 +2869,11 @@ SELECT
 FROM RoboticsRuns r
 LEFT JOIN RoboticsRobots rob ON r.RobotId = rob.RobotId
 LEFT JOIN RoboticsMissionStatusCodes msc ON r.MissionStatusCode = msc.MissionStatusCode
-WHERE r.SiteId = :site_id
+WHERE r.SiteId = COALESCE(:site_id, 1)
     AND (:start_date IS NULL OR r.StartedAtUtc >= :start_date)
     AND (:end_date IS NULL OR r.StartedAtUtc < :end_date)
 ORDER BY r.StartedAtUtc DESC
-OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY
+OFFSET 0 ROWS FETCH NEXT COALESCE(:limit, 100) ROWS ONLY
 ```
 
 #### UpsertRun
@@ -2849,12 +2882,12 @@ OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY
 **Database:** MSSQL_Robotics
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| run_uuid | String | (required) |
-| mission_name | String | null |
-| status_code | String | (required) |
-| robot_hostname | String | (required) |
+| Name | Type | Required | Notes |
+|------|------|----------|-------|
+| run_uuid | String | Yes | Orbit run UUID |
+| mission_name | String | No | Pass `None` if unknown |
+| status_code | String | Yes | e.g., `RUN`, `COMP`, `FAIL` |
+| robot_hostname | String | Yes | Robot hostname for FK lookup |
 
 ```sql
 -- Named Query: UpsertRun
@@ -2891,9 +2924,9 @@ WHEN NOT MATCHED THEN
 **Caching:** None
 
 **Parameters:**
-| Name | Type | Default |
-|------|------|---------|
-| rule_id | Int4 | (required) |
+| Name | Type | Required |
+|------|------|----------|
+| rule_id | Int4 | Yes |
 
 ```sql
 -- Named Query: GetNotificationRecipients
@@ -2916,20 +2949,45 @@ ORDER BY nr.NotificationRecipientId ASC;
 # From Project Library or any script
 # Reference: system.db.runNamedQuery()
 
-# Query example - returns dataset
-result = system.db.runNamedQuery(
-    "GetMissionHistory",
-    {"site_id": 1, "start_date": start_date, "end_date": end_date, "limit": 50}
-)
+# IMPORTANT: Ignition 8.1 Named Queries have no default value feature.
+# All parameters must be explicitly provided. Apply defaults in calling code.
 
-# Update example - returns affected row count
+# Query example with defaults applied in calling code
+def get_mission_history(site_id=1, start_date=None, end_date=None, limit=100):
+    """Get mission history with optional filters.
+    
+    Args:
+        site_id: Site ID (default: 1)
+        start_date: Start datetime filter (default: None = no filter)
+        end_date: End datetime filter (default: None = no filter)  
+        limit: Max rows to return (default: 100)
+    
+    Returns:
+        Dataset of mission history records
+    """
+    return system.db.runNamedQuery(
+        "Robotics/GetMissionHistory",
+        {
+            "site_id": site_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "limit": limit
+        }
+    )
+
+# Usage
+result = get_mission_history()                    # Uses all defaults
+result = get_mission_history(site_id=2)           # Override site only
+result = get_mission_history(limit=50)            # Override limit only
+
+# Update example - required parameters have no defaults
 rows_affected = system.db.runNamedQuery(
-    "UpsertRun",
+    "Robotics/UpsertRun",
     {
-        "run_uuid": run_uuid,
-        "mission_name": mission_name,
-        "status_code": status_code,
-        "robot_hostname": robot_hostname
+        "run_uuid": run_uuid,           # Required
+        "mission_name": mission_name,    # Optional, can be None
+        "status_code": status_code,      # Required
+        "robot_hostname": robot_hostname # Required
     }
 )
 ```
@@ -3485,5 +3543,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.3 (Demo MVP) - Notification Rules Scalability Design Documentation*  
+*Version: 2.4 (Demo MVP) - Named Query Default Value Handling Documentation*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
