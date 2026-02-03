@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.8 (Demo) - Polling-Based Architecture  
+**Version:** 2.9 (Demo) - Polling-Based Architecture  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
@@ -15,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.9** | 2026-02-03 | **Orbit API Status Value Fix**<br>• Fixed `status_map` and `trigger_type_map` in `run_event_handlers` module to handle Orbit API's actual status values<br>• Added `"success": "COMP"` mapping - Orbit API returns "success" for completed runs, not "completed"<br>• Added `"success": "RUN_COMP"` to trigger type mapping for proper notification routing<br>• Previously caused "Unhandled run status for trigger mapping: success" warning and incorrect tag values<br>• Tags were being written with wrong status code ("PEND" instead of "COMP")<br>• **Why:** Orbit API documentation and actual response values differ; "success" is the real completed status |
 | **2.8** | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost |
 | **2.7** | 2026-02-03 | **PyDataSet Conversion Bug Fix**<br>• Fixed dictionary comprehension in webhook handler's PyDataSet-to-dict conversion<br>• Corrected `getValueAt(0,1)` to `getValueAt(0,i)` to properly iterate through all columns<br>• Bug caused all dictionary values to reference column index 1 instead of respective column indices<br>• Affects context parameter extraction in `doPost()` function<br>• Ensures proper mapping of column names to their corresponding values |
 | **2.6** | 2026-02-03 | **Simplified Script Console Test Pattern**<br>• Removed `system.util.invokeLater()` pattern from Script Console tests (function does not exist in Ignition 8.1)<br>• Restructured test script from three separate functions to sequential execution<br>• Tests now run immediately one after another without delays<br>• Simplified output formatting for cleaner console results<br>• Improves usability for developers testing webhook handlers in Script Console |
@@ -1689,9 +1690,11 @@ def handle_run_event(payload):
     robot_hostname = run_data.get("robot", {}).get("hostname", "")
     
     # Map Orbit status to our codes
+    # Note: Orbit API returns "success" for completed runs, not "completed"
     status_map = {
         "started": "RUN",
         "completed": "COMP",
+        "success": "COMP",   # Orbit API uses "success" for completed runs
         "failed": "FAIL",
         "pending": "PEND"
     }
@@ -1704,9 +1707,11 @@ def handle_run_event(payload):
     _update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
     
     # 3. Evaluate notification rules
+    # Note: Orbit API returns "success" for completed runs, not "completed"
     trigger_type_map = {
         "started": "RUN_START",
         "completed": "RUN_COMP",
+        "success": "RUN_COMP",  # Orbit API uses "success" for completed runs
         "failed": "RUN_FAIL",
     }
     trigger_type = trigger_type_map.get(status, None)
@@ -2155,6 +2160,7 @@ except Exception as e:
     print "ERROR: {}".format(str(e))
 
 # Test Case 2: Mission Completed Event
+# Note: Orbit API returns "success" for completed runs, not "completed"
 print "\n" + "=" * 60
 print "TEST 2: Mission Completed Event"
 print "=" * 60
@@ -2164,7 +2170,7 @@ test_payload_completed = {
     "data": {
         "uuid": "test-run-001",  # Same UUID to test update
         "missionName": "Daily Inspection",
-        "status": "completed",
+        "status": "success",  # Orbit API uses "success", not "completed"
         "robot": {"hostname": "spot-demo-01"},
     },
 }
