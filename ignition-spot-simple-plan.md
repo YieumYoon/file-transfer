@@ -1,13 +1,12 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.7 (Demo) - PyDataSet Conversion Fix  
+**Version:** 2.8 (Demo) - Polling-Based Architecture  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
 > - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
 > - [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts)
-> - [Web Dev Module](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev)
 > - [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries)
 > - [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient)
 > - [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)
@@ -16,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.8** | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost |
 | **2.7** | 2026-02-03 | **PyDataSet Conversion Bug Fix**<br>• Fixed dictionary comprehension in webhook handler's PyDataSet-to-dict conversion<br>• Corrected `getValueAt(0,1)` to `getValueAt(0,i)` to properly iterate through all columns<br>• Bug caused all dictionary values to reference column index 1 instead of respective column indices<br>• Affects context parameter extraction in `doPost()` function<br>• Ensures proper mapping of column names to their corresponding values |
 | **2.6** | 2026-02-03 | **Simplified Script Console Test Pattern**<br>• Removed `system.util.invokeLater()` pattern from Script Console tests (function does not exist in Ignition 8.1)<br>• Restructured test script from three separate functions to sequential execution<br>• Tests now run immediately one after another without delays<br>• Simplified output formatting for cleaner console results<br>• Improves usability for developers testing webhook handlers in Script Console |
 | **2.5** | 2026-02-03 | **TEST_MODE for SMTP-Free Testing**<br>• Added `TEST_MODE` flag to `notification_engine` module for testing without SMTP configuration<br>• Updated `_send_and_log()` function to skip email sending when TEST_MODE=True<br>• Enhanced testing section with comprehensive guidance for development without SMTP<br>• Added expected results checklist (logs, database, tags) for Script Console tests<br>• Prevents SMTP errors from blocking webhook handler development workflow<br>• Enables full integration testing (DB updates, tag writes, notification logic) before production |
@@ -46,11 +46,13 @@
 | In Scope | Out of Scope (Future) |
 |----------|----------------------|
 | Single site, 1-2 robots | Multi-site federation |
-| Basic polling (60s) | Store & Forward historian |
-| Webhook for run events | Complex alarm pipelines |
+| Polling-based run sync (60s) | Store & Forward historian |
+| Change detection + notifications | Complex alarm pipelines |
 | Simple email notifications | SMS/Push notifications |
 | Basic Perspective dashboard | Role-based multi-dashboards |
 | Core database tables | Advanced partitioning |
+
+> **Note (v2.8):** This plan uses **polling-based architecture** instead of webhooks. Polling runs every 60 seconds, detects status changes, and triggers notifications. This approach requires no Web Dev module (no additional license cost). See Appendix A if you need real-time webhooks in the future.
 
 ---
 
@@ -122,13 +124,12 @@ flowchart TB
 
     subgraph ORBIT["☁️ ORBIT SERVER"]
         ORBIT_API[REST API /api/v0]
-        ORBIT_WH[Webhook Service]
     end
 
     subgraph IGNITION["🔧 IGNITION GATEWAY"]
         subgraph DATA_FLOW["Data Collection"]
             POLL[Gateway Timer<br/>Poll every 60s]
-            WEBDEV[Web Dev Module<br/>/orbit/webhook]
+            CHANGE[Change Detection<br/>Status Tracking]
         end
         
         TAGS[(Memory Tags<br/>SpotRobot UDT)]
@@ -148,25 +149,25 @@ flowchart TB
         DASH[Dashboard<br/>Robot Status + Mission Log]
     end
 
-    SPOT1 --> ORBIT_API & ORBIT_WH
-    ORBIT_API -->|GET /robots| POLL
-    ORBIT_WH -->|POST webhook| WEBDEV
+    SPOT1 --> ORBIT_API
+    ORBIT_API -->|GET /runs| POLL
     
-    POLL -->|Write| TAGS
-    WEBDEV -->|Write| TAGS
-    WEBDEV -->|Insert| NQ --> MSSQL
-    WEBDEV --> RULES --> SMTP
+    POLL --> CHANGE
+    CHANGE -->|Status Changed| TAGS
+    CHANGE -->|Insert/Update| NQ --> MSSQL
+    CHANGE --> RULES --> SMTP
     
     TAGS --> DASH
     MSSQL --> DASH
 ```
 
-### 3.2 Two Data Flows
+### 3.2 Data Flow (Polling-Based)
+
+> **Note (v2.8):** This architecture uses **polling only** (no webhooks). Polling detects status changes and triggers the same notification flow that webhooks would. This removes the Web Dev module dependency.
 
 | Flow | Trigger | Purpose | Update Rate |
 |------|---------|---------|-------------|
-| **Flow A: Polling** | Gateway Timer | Mission runs sync (backup to webhooks) | Every 60000ms |
-| **Flow B: Webhook** | Orbit event | Mission events (start, complete, fail) | Event-driven |
+| **Polling + Change Detection** | Gateway Timer | Poll Orbit API, detect changes, update DB/Tags, send notifications | Every 60000ms |
 
 ---
 
@@ -739,7 +740,7 @@ Project: SpotOrbitIntegration
 │   │   ├── poll_all_robots()       # Main polling function
 │   │   └── update_robot_tags()     # Write to UDT tags
 │   │
-│   ├── webhook_handlers            ← Webhook processing logic
+│   ├── run_event_handlers          ← Run event processing logic (v2.8: renamed from webhook_handlers)
 │   │   ├── handle_run_event()      # Process run events
 │   │   ├── upsert_run()            # Database upsert
 │   │   └── update_mission_tags()   # Write mission tags
@@ -754,18 +755,15 @@ Project: SpotOrbitIntegration
 │       ├── hostname_to_tag_path()  # DEPRECATED - kept for compatibility
 │       └── get_site_config()       # Read site configuration
 │
-├── Gateway Events (Designer > Scripting > Gateway Events)
-│   │
-│   └── Timer Scripts
-│       └── RobotPolling            ← Simple 1-line executor
-│           Code: robot_polling.poll_all_robots()
-│           Delay: 15000ms, Fixed Rate
-│
-└── Web Dev (Designer > Web Dev)
-    └── orbit/
-        └── webhook                 ← Python Resource (doPost)
-            Code: webhook_handlers.handle_run_event(request)
+└── Gateway Events (Designer > Scripting > Gateway Events)
+    │
+    └── Timer Scripts
+        └── RunsPolling             ← Polls Orbit API + triggers notifications
+            Code: runs_polling.poll_recent_runs()
+            Delay: 60000ms, Fixed Rate
 ```
+
+> **Note (v2.8):** Web Dev module is no longer required. The polling timer handles all data collection, change detection, and notification triggering. See Appendix A if you need webhook support in the future.
 
 #### Gateway Scripting Project Setup (Optional for This Project)
 
@@ -797,7 +795,7 @@ Project: SpotOrbitIntegration
 1. **Wrap all code in functions or classes** - Code outside functions executes when the Designer loads or project saves
 2. **httpClient instances are heavyweight** - Create once in Project Library and reuse
 3. **Save project after creating scripts** - Project Library scripts aren't accessible until saved
-4. **Use hierarchical logger names** - e.g., `orbit.polling`, `orbit.webhook.notify`
+4. **Use hierarchical logger names** - e.g., `orbit.runs_polling`, `orbit.run_event`, `orbit.notification`
 
 ### 6.2 SpotRobot UDT Definition
 
@@ -1127,82 +1125,165 @@ def get_anomalies(limit=100, status=None, start_time=None):
 
 **Location:** Designer > Project Browser > Scripting > Project Library > runs_polling
 
-**Purpose:** Poll the Orbit `/runs` endpoint to update mission status tags. This serves as a backup to webhooks and ensures tags stay synchronized even if webhooks are missed.
+**Purpose (v2.8):** Primary data collection module that polls the Orbit `/runs` endpoint, detects status changes, updates database/tags, and triggers notifications. This polling-based approach replaces the need for webhooks and the Web Dev module.
 
 ```python
 """
 Project Library: runs_polling
 Location: Designer > Project Browser > Scripting > Project Library
-Purpose: Poll Orbit /runs endpoint to update mission status tags
+Purpose: Poll Orbit /runs endpoint, detect changes, and trigger full event processing
 
-This module serves as:
-1. Backup to webhooks - ensures tags update even if webhook fails
-2. Initial sync - populates tags when system starts
-3. Historical sync - can fetch older runs for reporting
+v2.8 Update: This module now handles the COMPLETE data flow:
+1. Poll Orbit API for recent runs
+2. Detect status changes (new runs, status transitions)
+3. Trigger run_event_handlers for DB upsert, tag writes, and notifications
+4. No webhook/Web Dev module required
 
 Note: Real-time telemetry (battery, pose, state) is NOT available from Orbit.
       See Section 11.2 for future Spot SDK integration if telemetry is needed.
 """
 
-# Track last poll time to fetch only new runs
+# Track previous run statuses to detect changes
+# Key: run_uuid, Value: {"status": str, "processed_at": datetime}
+_previous_run_states = {}
+
+# Track last poll time
 _last_poll_time = None
 
 def poll_recent_runs():
     """
-    Main polling function - called by Gateway Timer Script.
-    Fetches recent mission runs from Orbit API and updates UDT mission tags.
+    Main polling function - called by Gateway Timer Script every 60 seconds.
     
-    This provides:
-    - Mission status updates (started, completed, failed)
-    - Mission timing information (start/end times)
-    - Robot-to-mission association
+    This function:
+    1. Fetches recent runs from Orbit API
+    2. Detects new runs or status changes
+    3. Triggers run_event_handlers for changed runs (DB + Tags + Notifications)
     
-    This does NOT provide (Orbit API limitation):
-    - Battery level
-    - Robot pose/position
-    - Connection status
-    - Charging status
+    This provides the same functionality as webhooks without requiring Web Dev module.
     """
     global _last_poll_time
     logger = system.util.getLogger("orbit.runs_polling")
     
     try:
-        # Fetch recent runs (last 60 seconds or since last poll)
+        # Fetch recent runs from Orbit API
         runs = orbit_api.get_runs(limit=50)
         
         if not runs:
             logger.debug("No runs returned from API")
             return
         
-        # Group runs by robot hostname to get latest run per robot
-        latest_runs_by_robot = {}
+        # Process each run and detect changes
+        changed_count = 0
         for run in runs:
-            hostname = run.get("robotHostname", "")
-            if not hostname:
+            run_uuid = run.get("uuid", "")
+            if not run_uuid:
                 continue
             
-            # Keep only the most recent run per robot
-            existing = latest_runs_by_robot.get(hostname)
-            if not existing:
-                latest_runs_by_robot[hostname] = run
-            else:
-                # Compare start times to keep the most recent
-                run_start = run.get("startTime", "")
-                existing_start = existing.get("startTime", "")
-                if run_start > existing_start:
-                    latest_runs_by_robot[hostname] = run
-        
-        # Update tags for each robot's latest run
-        updated_count = 0
-        for hostname, run in latest_runs_by_robot.items():
-            if _update_mission_tags(hostname, run):
-                updated_count += 1
+            # Check if this run's status has changed
+            if _has_status_changed(run):
+                # Status changed - trigger full event processing
+                _process_run_event(run)
+                changed_count += 1
         
         _last_poll_time = system.date.now()
-        logger.info("Updated mission tags for {} robots".format(updated_count))
+        
+        if changed_count > 0:
+            logger.info("Processed {} run status changes".format(changed_count))
+        else:
+            logger.debug("No status changes detected")
         
     except Exception as e:
         logger.error("Runs polling failed: {}".format(str(e)))
+
+
+def _has_status_changed(run):
+    """
+    Check if a run's status has changed since last poll.
+    
+    Args:
+        run: Run dictionary from Orbit API
+        
+    Returns:
+        bool: True if this is a new run or status changed
+    """
+    global _previous_run_states
+    
+    run_uuid = run.get("uuid", "")
+    current_status = run.get("missionStatus", "")
+    
+    # Get previous state for this run
+    previous = _previous_run_states.get(run_uuid)
+    
+    if previous is None:
+        # New run we haven't seen before
+        _previous_run_states[run_uuid] = {
+            "status": current_status,
+            "processed_at": system.date.now()
+        }
+        return True
+    
+    if previous["status"] != current_status:
+        # Status changed
+        _previous_run_states[run_uuid] = {
+            "status": current_status,
+            "processed_at": system.date.now()
+        }
+        return True
+    
+    # No change
+    return False
+
+
+def _process_run_event(run):
+    """
+    Process a run event by delegating to run_event_handlers.
+    Converts Orbit API run data to event payload format.
+    
+    Args:
+        run: Run dictionary from Orbit API /runs endpoint
+    """
+    logger = system.util.getLogger("orbit.runs_polling.process")
+    
+    # Map Orbit status to event type
+    orbit_status = run.get("missionStatus", "").lower()
+    status_to_event = {
+        "running": "run.started",
+        "started": "run.started",
+        "in_progress": "run.started",
+        "completed": "run.completed",
+        "success": "run.completed",
+        "succeeded": "run.completed",
+        "failed": "run.failed",
+        "error": "run.failed",
+        "aborted": "run.failed",
+        "cancelled": "run.failed",
+    }
+    event_type = status_to_event.get(orbit_status, "run.started")
+    
+    # Build payload in same format as webhook would send
+    # This allows run_event_handlers to work with both polling and webhooks
+    payload = {
+        "type": event_type,
+        "data": {
+            "uuid": run.get("uuid", ""),
+            "missionName": run.get("missionName", ""),
+            "status": orbit_status,
+            "robot": {
+                "hostname": run.get("robotHostname", "")
+            }
+        }
+    }
+    
+    try:
+        # Delegate to run_event_handlers (same logic as webhook would use)
+        run_event_handlers.handle_run_event(payload)
+        logger.info("Processed run event: {} - {}".format(
+            run.get("missionName", ""), event_type
+        ))
+    except Exception as e:
+        logger.error("Failed to process run {}: {}".format(
+            run.get("uuid", ""), str(e)
+        ))
 
 def _update_mission_tags(hostname, run_data):
     """
@@ -1500,12 +1581,12 @@ def get_site_config(site_id=1):
 **Location:** Designer > Project Browser > Scripting > Gateway Events > Timer Scripts  
 **Script Name:** `RunsPolling`  
 **Settings:**
-- **Delay:** 60000 (milliseconds) - 60 seconds is sufficient since webhooks provide real-time updates
+- **Delay:** 60000 (milliseconds) - 60 seconds polling interval
 - **Delay Type:** Fixed Rate
 - **Enabled:** ✓
 - **Threading:** Shared
 
-**Purpose:** Backup polling for mission status. Webhooks provide real-time updates, but this ensures tags stay synchronized if webhooks fail.
+**Purpose (v2.8):** Primary data collection mechanism. Polls Orbit API, detects status changes, and triggers full event processing (database upsert, tag writes, notifications). This replaces the need for webhooks.
 
 ```python
 """
@@ -1513,8 +1594,11 @@ Gateway Timer Script: RunsPolling
 Location: Designer > Scripting > Gateway Events > Timer Scripts
 Schedule: Fixed Rate, 60000ms (60 seconds)
 
-Purpose: Poll Orbit /runs endpoint to update mission status tags.
-         Serves as backup to webhooks for reliability.
+Purpose (v2.8): Primary data collection - polls Orbit API, detects changes,
+                triggers DB updates, tag writes, and notifications.
+                
+This polling-based approach provides the same functionality as webhooks
+without requiring the Web Dev module (no additional license cost).
 
 Note: This does NOT poll robot telemetry (battery, pose, state).
       Orbit API does not provide real-time telemetry data.
@@ -1570,115 +1654,33 @@ def initialize():
 initialize()
 ```
 
-### 6.8 Web Dev Webhook Endpoint
+### 6.8 Run Event Handlers Module
 
-> **Reference:** [Web Dev Module](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev)
+> **Note (v2.8):** This section was previously "Web Dev Webhook Endpoint". The polling-based architecture no longer requires the Web Dev module. See **Appendix A** if you need webhook support in the future.
 
-**Location:** Designer > Project Browser > Web Dev  
-**Resource Type:** Python Resource  
-**Resource Name:** `orbit/webhook`  
-**Endpoint URL:** `http://<gateway>:8088/system/webdev/<project>/orbit/webhook`  
-**Method:** POST (enable doPost)
+**Location:** Designer > Project Browser > Scripting > Project Library > run_event_handlers
 
-#### Web Dev Resource Configuration
-
-1. Right-click **Web Dev** in Project Browser → **New Python Resource**
-2. Name it `webhook` inside an `orbit` folder (creates `orbit/webhook`)
-3. Check **Enabled** for **doPost** method
-4. Optionally enable **Require HTTPS** for production
-5. Optionally enable **Require Authentication** with appropriate User Source
-
-#### Request Object Properties
-
-Per Ignition documentation, the `request` parameter contains:
-
-| Key | Description |
-|-----|-------------|
-| `request["data"]` | POST body - automatically parsed as dict if Content-Type is `application/json` |
-| `request["headers"]` | Dictionary of HTTP headers |
-| `request["params"]` | URL query parameters |
-| `request["remoteAddr"]` | Client IP address |
-
-#### Return Value Format
-
-Return a dictionary with one of these keys:
-- `{"json": data}` - Returns JSON response (recommended for webhooks)
-- `{"html": string}` - Returns HTML response
-- `{"response": string}` - Returns plain text
+**Purpose:** Process run events from polling (or webhooks if you add them later). This module handles database upserts, tag writes, and notification triggers.
 
 ```python
 """
-Web Dev Endpoint: Receive Orbit webhook events
-Location: Designer > Project Browser > Web Dev > orbit/webhook
-Endpoint: POST /system/webdev/<project>/orbit/webhook
-
-Return Value Reference:
-- {"json": data} → application/json response
-- {"status": "ok"} → Will be converted to JSON automatically
-"""
-
-def doPost(request, session):
-    """
-    Handle incoming webhook from Orbit.
-    
-    Args:
-        request: Dictionary with keys: data, headers, params, remoteAddr, etc.
-        session: Dictionary for session state (cookies must be enabled)
-    
-    Returns:
-        dict: Response dictionary with 'json', 'html', or 'response' key
-    """
-    logger = system.util.getLogger("orbit.webhook")
-    
-    try:
-        # request["data"] is automatically parsed as dict when Content-Type is application/json
-        payload = request["data"]
-        
-        # If payload is string (non-JSON content type), parse it
-        # NOTE: Ignition 8.1 uses Jython 2.7 where `basestring` exists (Python 3 uses `str`).
-        if isinstance(payload, basestring):
-            import json
-            payload = json.loads(payload)
-        
-        event_type = payload.get("type", "")
-        logger.info("Received webhook: {} from {}".format(event_type, request["remoteAddr"]))
-        
-        # Route by event type - delegate to Project Library modules
-        # Orbit webhook implementations may send values like "run", "run.started", etc.
-        if event_type.startswith("run"):
-            webhook_handlers.handle_run_event(payload)
-        else:
-            logger.warn("Unknown event type: {}".format(event_type))
-        
-        # Return JSON response
-        return {"json": {"status": "ok", "received": event_type}}
-        
-    except Exception as e:
-        logger.error("Webhook error: {}".format(str(e)))
-        # Return error response (still 200 OK, but with error in body)
-        return {"json": {"status": "error", "message": str(e)}}
-
-```
-
-### 6.9 Project Library: webhook_handlers Module
-
-**Location:** Designer > Project Browser > Scripting > Project Library > webhook_handlers
-
-```python
-"""
-Project Library: webhook_handlers
+Project Library: run_event_handlers
 Location: Designer > Project Browser > Scripting > Project Library
-Purpose: Webhook event processing logic
+Purpose: Run event processing logic (DB updates, tag writes, notifications)
+
+v2.8: Renamed from webhook_handlers. Called by runs_polling when status changes.
+      Same code works with both polling and webhooks (Appendix A).
 """
 
 def handle_run_event(payload):
     """
-    Process run (mission) events from Orbit webhook.
+    Process run (mission) events from polling or webhook.
     
     Args:
-        payload: Parsed webhook payload dictionary
+        payload: Event payload dictionary with format:
+                 {"type": "run.started|completed|failed", "data": {...}}
     """
-    logger = system.util.getLogger("orbit.webhook.run")
+    logger = system.util.getLogger("orbit.run_event")
     
     run_data = payload.get("data", {})
     run_uuid = run_data.get("uuid", "")
@@ -1721,7 +1723,7 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
     Insert or update run in database using Named Query.
     Uses atomic MERGE operation for thread safety.
     """
-    logger = system.util.getLogger("orbit.webhook.db")
+    logger = system.util.getLogger("orbit.run_event.db")
     
     try:
         # Use Named Query for secure, maintainable database access
@@ -1741,7 +1743,7 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
 
 def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     """Update mission-related tags for the robot."""
-    logger = system.util.getLogger("orbit.webhook.tags")
+    logger = system.util.getLogger("orbit.run_event.tags")
     
     # Get tag base path using helper (supports both demo and production modes)
     tag_base = helpers.get_robot_tag_base(robot_hostname)
@@ -2054,14 +2056,16 @@ rules = system.db.runNamedQuery(
 )
 ```
 
-### 6.11 Testing the Webhook Implementation
+### 6.11 Testing the Run Event Handlers
 
-After implementing the webhook endpoint and handlers, test the integration to ensure everything works correctly.
+> **Note (v2.8):** This section has been updated for the polling-based architecture. Tests call `run_event_handlers` directly (same as polling would).
+
+After implementing the run event handlers, test the integration to ensure everything works correctly.
 
 **Testing Strategy:**
 
-The webhook implementation includes a `TEST_MODE` flag in the `notification_engine` module that allows you to:
-- ✅ Test webhook processing, database updates, and tag writes
+The implementation includes a `TEST_MODE` flag in the `notification_engine` module that allows you to:
+- ✅ Test event processing, database updates, and tag writes
 - ✅ Verify notification logic without SMTP configuration
 - ✅ See what emails *would* be sent in gateway logs
 - ✅ Avoid SMTP errors blocking your development workflow
@@ -2077,8 +2081,7 @@ The webhook implementation includes a `TEST_MODE` flag in the `notification_engi
 Before testing, ensure:
 - ✅ Database tables are created with sample data
 - ✅ Tag provider has demo robot structure (`[default]Demo/Robots/spot-demo-01/`)
-- ✅ Web Dev resource `orbit/webhook` is created with doPost enabled
-- ✅ Project Library modules (`webhook_handlers`, `notification_engine`, `helpers`) exist
+- ✅ Project Library modules (`run_event_handlers`, `runs_polling`, `notification_engine`, `helpers`) exist
 - ✅ Named Queries are created (see section 6.12)
 - ✅ At least one notification rule exists in the database
 
@@ -2110,13 +2113,13 @@ def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, bo
         # ... rest of existing code ...
 ```
 
-This allows you to test the entire webhook flow (database updates, tag writes, notification logic) without requiring SMTP configuration. When SMTP is ready, simply set `TEST_MODE = False`.
+This allows you to test the entire event flow (database updates, tag writes, notification logic) without requiring SMTP configuration. When SMTP is ready, simply set `TEST_MODE = False`.
 
 #### 6.11.2 Method 1: Script Console Test (Recommended for Development)
 
 **Location:** Designer > Tools > Script Console
 
-This method tests the handler logic directly without requiring external HTTP calls.
+This method tests the handler logic directly - the same code path that polling uses.
 
 **Prerequisites:**
 - Ensure `TEST_MODE = True` is set in the `notification_engine` module if SMTP is not configured
@@ -2124,8 +2127,8 @@ This method tests the handler logic directly without requiring external HTTP cal
 
 ```python
 """
-Script Console Test: Simulate webhook event processing
-Run this in the Designer Script Console to test webhook handlers
+Script Console Test: Simulate run event processing
+Run this in the Designer Script Console to test run_event_handlers
 
 Note: Set TEST_MODE = True in notification_engine module to test without SMTP
 """
@@ -2146,7 +2149,7 @@ test_payload_started = {
 }
 
 try:
-    webhook_handlers.handle_run_event(test_payload_started)
+    run_event_handlers.handle_run_event(test_payload_started)
     print "OK: Mission started event processed"
 except Exception as e:
     print "ERROR: {}".format(str(e))
@@ -2167,7 +2170,7 @@ test_payload_completed = {
 }
 
 try:
-    webhook_handlers.handle_run_event(test_payload_completed)
+    run_event_handlers.handle_run_event(test_payload_completed)
     print "OK: Mission completed event processed"
 except Exception as e:
     print "ERROR: {}".format(str(e))
@@ -2188,7 +2191,7 @@ test_payload_failed = {
 }
 
 try:
-    webhook_handlers.handle_run_event(test_payload_failed)
+    run_event_handlers.handle_run_event(test_payload_failed)
     print "OK: Mission failed event processed"
 except Exception as e:
     print "ERROR: {}".format(str(e))
@@ -2197,7 +2200,7 @@ print "\n" + "=" * 60
 print "TEST COMPLETE - Check results below"
 print "=" * 60
 print "Check Gateway logs: Status > Diagnostics > Logs"
-print "Filter by: orbit.webhook"
+print "Filter by: orbit.run_event"
 ```
 
 **Expected Results with TEST_MODE=True:**
@@ -2214,6 +2217,10 @@ After running the test, verify the following:
    Expected log entries:
    - "[TEST MODE] Notification evaluated - TO: ['test@example.com']"
    - "[TEST MODE] Email not sent (TEST_MODE=True)"
+
+   Note: Should NOT see "GetRunNotificationContext failed" warnings.
+   If you see dict conversion errors, verify the notification_engine_module
+   uses the correct PyDataSet to dictionary conversion pattern.
    ```
 
 3. **Database Verification:**
@@ -2246,71 +2253,55 @@ Once SMTP is configured (see Section X for SMTP setup), disable test mode:
 3. Re-run tests - emails should now be sent
 4. Verify emails are received by checking your inbox
 
-#### 6.11.3 Method 2: HTTP Endpoint Test (Production-Ready)
+#### 6.11.3 Method 2: Test Polling Function (Integration Test)
 
-Test the actual Web Dev HTTP endpoint using `curl` or Postman.
+Test the full polling flow by calling `poll_recent_runs()` directly.
 
-**Step 1:** Get your endpoint URL
-- Format: `http://<gateway>:8088/system/webdev/<ProjectName>/orbit/webhook`
-- Example: `http://localhost:8088/system/webdev/SpotDemo/orbit/webhook`
+**In Script Console:**
+```python
+"""
+Test the full polling integration.
+This tests: API call → Change detection → Event handling → DB/Tags/Notifications
+"""
 
-**Step 2:** Send test request from terminal
+# Test 1: Run the polling function
+print "=" * 60
+print "Testing runs_polling.poll_recent_runs()"
+print "=" * 60
 
-```bash
-# Test 1: Mission Started
-curl -X POST \
-  http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "run.started",
-    "data": {
-      "uuid": "curl-test-001",
-      "missionName": "Test Mission via curl",
-      "status": "started",
-      "robot": {
-        "hostname": "spot-demo-01"
-      }
-    }
-  }'
+try:
+    runs_polling.poll_recent_runs()
+    print "OK: Polling completed successfully"
+except Exception as e:
+    print "ERROR: {}".format(str(e))
 
-# Expected Response:
-# {"status":"ok","received":"run.started"}
+print "\nCheck Gateway logs for: orbit.runs_polling"
 ```
 
-```bash
-# Test 2: Mission Completed
-curl -X POST \
-  http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "run.completed",
-    "data": {
-      "uuid": "curl-test-001",
-      "missionName": "Test Mission via curl",
-      "status": "completed",
-      "robot": {
-        "hostname": "spot-demo-01"
-      }
-    }
-  }'
-```
+**What to verify:**
+- Check Gateway logs for `orbit.runs_polling` messages
+- Verify tags update in Tag Browser
+- Check database for any new/updated run records
+- If status changes detected, notification logs should appear
+
+> **Note:** If no runs are returned from Orbit API, no changes will be detected. This is expected behavior.
 
 #### 6.11.4 Method 3: Test Utility Module (Optional)
 
 Create a reusable test utility in Project Library for ongoing testing.
 
-**Location:** Designer > Project Browser > Scripting > Project Library > webhook_test_utils
+**Location:** Designer > Project Browser > Scripting > Project Library > run_event_test_utils
 
 ```python
 """
-Project Library: webhook_test_utils
+Project Library: run_event_test_utils
 Location: Designer > Project Browser > Scripting > Project Library
-Purpose: Testing utilities for webhook implementation
+Purpose: Testing utilities for run event processing (v2.8)
 """
 
-def send_test_webhook(event_type, run_uuid=None, mission_name="Test Mission", robot_hostname="spot-demo-01"):
+def send_test_event(event_type, run_uuid=None, mission_name="Test Mission", robot_hostname="spot-demo-01"):
     """
-    Send a test webhook event to handlers.
+    Send a test run event to handlers.
     
     Args:
         event_type: "run.started", "run.completed", or "run.failed"
@@ -2322,7 +2313,7 @@ def send_test_webhook(event_type, run_uuid=None, mission_name="Test Mission", ro
         dict: Test results with success/error information
     """
     import uuid
-    logger = system.util.getLogger("orbit.webhook.test")
+    logger = system.util.getLogger("orbit.run_event.test")
     
     if not run_uuid:
         run_uuid = "test-" + str(uuid.uuid4())[:8]
@@ -2346,16 +2337,16 @@ def send_test_webhook(event_type, run_uuid=None, mission_name="Test Mission", ro
     }
     
     try:
-        webhook_handlers.handle_run_event(payload)
-        logger.info("Test webhook sent: {} - {}".format(event_type, run_uuid))
+        run_event_handlers.handle_run_event(payload)
+        logger.info("Test event sent: {} - {}".format(event_type, run_uuid))
         return {
             "success": True,
             "run_uuid": run_uuid,
             "event_type": event_type,
-            "message": "Test webhook processed successfully"
+            "message": "Test event processed successfully"
         }
     except Exception as e:
-        logger.error("Test webhook failed: {}".format(str(e)))
+        logger.error("Test event failed: {}".format(str(e)))
         return {
             "success": False,
             "run_uuid": run_uuid,
@@ -2366,7 +2357,7 @@ def send_test_webhook(event_type, run_uuid=None, mission_name="Test Mission", ro
 
 def verify_test_results(run_uuid):
     """
-    Verify test webhook results in database and tags.
+    Verify test run event results in database and tags.
     
     Args:
         run_uuid: UUID of test run to verify
@@ -2374,7 +2365,7 @@ def verify_test_results(run_uuid):
     Returns:
         dict: Verification results
     """
-    logger = system.util.getLogger("orbit.webhook.test")
+    logger = system.util.getLogger("orbit.run_event.test")
     results = {
         "run_uuid": run_uuid,
         "database_check": False,
@@ -2440,11 +2431,11 @@ def verify_test_results(run_uuid):
 
 def run_full_test_suite():
     """
-    Run complete test suite for webhook implementation.
+    Run complete test suite for run event processing.
     Returns detailed test results.
     """
-    logger = system.util.getLogger("orbit.webhook.test")
-    logger.info("Starting full webhook test suite...")
+    logger = system.util.getLogger("orbit.run_event.test")
+    logger.info("Starting full run event test suite...")
     
     results = {
         "timestamp": system.date.now(),
@@ -2458,8 +2449,8 @@ def run_full_test_suite():
     ]
     
     for event_type, mission_name in test_cases:
-        # Send webhook
-        send_result = send_test_webhook(event_type, mission_name=mission_name)
+        # Send test event
+        send_result = send_test_event(event_type, mission_name=mission_name)
         
         # Wait for processing
         system.util.sleep(1000)
@@ -2491,15 +2482,15 @@ def run_full_test_suite():
 
 ```python
 # Quick test
-result = webhook_test_utils.send_test_webhook("run.completed")
+result = run_event_test_utils.send_test_event("run.completed")
 print result
 
 # Verify results
-verification = webhook_test_utils.verify_test_results(result["run_uuid"])
+verification = run_event_test_utils.verify_test_results(result["run_uuid"])
 print verification
 
 # Run full test suite
-suite_results = webhook_test_utils.run_full_test_suite()
+suite_results = run_event_test_utils.run_full_test_suite()
 print suite_results
 ```
 
@@ -2510,18 +2501,18 @@ After running tests, verify the following:
 **✅ Gateway Logs** (Gateway > Status > Diagnostics > Logs)
 
 Filter logs by these logger names:
-- `orbit.webhook` - Webhook received and routing
-- `orbit.webhook.run` - Run event processing
-- `orbit.webhook.db` - Database operations
-- `orbit.webhook.tags` - Tag write operations
+- `orbit.runs_polling` - Polling and change detection
+- `orbit.run_event` - Run event processing
+- `orbit.run_event.db` - Database operations
+- `orbit.run_event.tags` - Tag write operations
 - `orbit.notification` - Notification evaluation
 - `orbit.notification.send` - Email sending
 
 Expected log entries:
 ```
-INFO [orbit.webhook] Received webhook: run.completed from 127.0.0.1
-INFO [orbit.webhook.db] Upserted run test-run-001: 1 rows affected
-INFO [orbit.webhook.run] Processed run event: Daily Inspection - COMP
+INFO [orbit.runs_polling] Processed 2 run status changes
+INFO [orbit.run_event.db] Upserted run test-run-001: 1 rows affected
+INFO [orbit.run_event] Processed run event: Daily Inspection - COMP
 INFO [orbit.notification] Sent notification: Mission Completed: Daily Inspection
 ```
 
@@ -2567,31 +2558,32 @@ If notification rules are configured:
 
 | Issue | Possible Cause | Solution |
 |-------|---------------|----------|
-| HTTP 404 on endpoint | Wrong project name or path | Verify URL matches project name exactly (case-sensitive) |
-| `NameError: webhook_handlers` | Module not created | Create Project Library module `webhook_handlers` |
+| `NameError: run_event_handlers` | Module not created | Create Project Library module `run_event_handlers` |
+| `NameError: runs_polling` | Module not created | Create Project Library module `runs_polling` |
 | Database write fails | Named Query missing | Verify `UpsertRun` Named Query exists |
 | Tag write fails | Tag path doesn't exist | Create demo robot tag structure or update `get_robot_tag_base()` |
 | No notification sent | No matching rules | Add test rule in `NotificationRule` table |
-| `basestring not defined` error | Python 3 vs Jython 2.7 | Change `basestring` to `(str, unicode)` for Jython |
+| Polling shows no changes | No new runs in Orbit | Check Orbit API has recent run data |
+| API returns empty | Network or auth issue | Check `orbit_api` config and network access |
 
 #### 6.11.7 Performance Testing
 
-For production deployments, test webhook performance:
+For production deployments, test polling performance:
 
 ```python
 """
-Performance test: Multiple rapid webhooks
+Performance test: Multiple rapid run events
 Tests thread safety and database contention handling
 """
 import time
 
-def performance_test(num_requests=10):
-    """Send multiple webhooks rapidly to test performance."""
+def performance_test(num_events=10):
+    """Process multiple events rapidly to test performance."""
     start_time = time.time()
     results = []
     
-    for i in range(num_requests):
-        result = webhook_test_utils.send_test_webhook(
+    for i in range(num_events):
+        result = run_event_test_utils.send_test_event(
             "run.completed",
             run_uuid="perf-test-{:03d}".format(i),
             mission_name="Performance Test {}".format(i)
@@ -2605,11 +2597,11 @@ def performance_test(num_requests=10):
     success_count = sum(1 for r in results if r["success"])
     
     print "Performance Test Results:"
-    print "  Requests: {}".format(num_requests)
+    print "  Events: {}".format(num_events)
     print "  Successful: {}".format(success_count)
-    print "  Failed: {}".format(num_requests - success_count)
+    print "  Failed: {}".format(num_events - success_count)
     print "  Total Time: {:.2f}s".format(elapsed)
-    print "  Avg Time: {:.2f}ms".format((elapsed / num_requests) * 1000)
+    print "  Avg Time: {:.2f}ms".format((elapsed / num_events) * 1000)
     
     return results
 
@@ -3238,12 +3230,12 @@ flowchart TB
 
 - [x] Create project: `SpotOrbitIntegration`
 - [x] ~~**Configure Gateway Scripting Project**~~ *(Not needed for this project)*
-  - Gateway Timer Scripts and Web Dev endpoints created within the project already have access to the Project Library
+  - Gateway Timer Scripts created within the project already have access to the Project Library
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [x] Create Project Library structure:
   - [x] `orbit_api` - Orbit API client with reusable httpClient (⚠️ **Note:** Returns config data only, not telemetry)
-  - [x] `runs_polling` - Mission runs polling logic (renamed from `robot_polling` in v1.9)
-  - [x] `webhook_handlers` - Webhook processing
+  - [x] `runs_polling` - Mission runs polling + change detection (v2.8: now handles full event flow)
+  - [x] `run_event_handlers` - Run event processing (v2.8: renamed from `webhook_handlers`)
   - [x] `notification_engine` - Notification logic
   - [x] `helpers` - Utility functions (⚠️ **Configure `TAG_BASE_PATH` to match your environment!**)
 - [x] **Save project** (Project Library not accessible until saved!)
@@ -3290,21 +3282,25 @@ flowchart TB
 - [x] Test each query using Named Query test interface
 - [x] Update Project Library to use Named Queries
 
-### Phase 6: Webhook Flow (Day 3-4)
+### Phase 6: Polling & Event Processing (Day 3-4)
 
-- [x] Verify Web Dev Module is installed (Gateway > Config > Modules)
-- [x] Create Web Dev Python Resource:
-  - Designer > Project Browser > Web Dev
-  - Create folder `orbit`, then resource `webhook`
-  - Enable `doPost` method
-- [ ] Test endpoint with curl or Postman:
-  ```bash
-  curl -X POST http://localhost:8088/system/webdev/SpotOrbitIntegration/orbit/webhook \
-    -H "Content-Type: application/json" \
-    -d '{"type": "run", "data": {"uuid": "test-123", "missionName": "Test", "status": "completed"}}'
+> **Note (v2.8):** Web Dev module is no longer required. The polling approach handles all data collection and event processing.
+
+- [x] Create `run_event_handlers` module in Project Library
+- [x] Create `runs_polling` module in Project Library
+- [ ] Create Gateway Timer Script `RunsPolling` (60000ms interval)
+- [ ] Test in Script Console:
+  ```python
+  # Test event handler directly
+  run_event_handlers.handle_run_event({
+      "type": "run.completed",
+      "data": {"uuid": "test-123", "missionName": "Test", "status": "completed", "robot": {"hostname": "spot-demo-01"}}
+  })
+  
+  # Test full polling flow
+  runs_polling.poll_recent_runs()
   ```
-- [ ] Configure Orbit webhook URL in Orbit server
-- [ ] Test webhook → database → tag flow
+- [ ] Verify polling → database → tag flow in Gateway logs
 
 ### Phase 7: Notifications (Day 4-5)
 
@@ -3324,10 +3320,10 @@ flowchart TB
 
 ### Phase 9: Testing & Validation
 
-- [ ] Test complete runs polling → mission tag update flow
-- [ ] Test complete webhook → database → tag → notification flow
+- [ ] Test complete polling → change detection → event handler flow
+- [ ] Test polling → database → tag → notification flow
 - [ ] Verify mission status tags update correctly (MissionStatusCode, MissionName, etc.)
-- [ ] Verify logging in Gateway logs
+- [ ] Verify logging in Gateway logs (filter by `orbit.runs_polling` and `orbit.run_event`)
 - [ ] Document any configuration differences for production
 - [ ] ⚠️ **Expected:** Telemetry tags (BatteryLevel, Pose, IsConnected) remain at default values - this is correct behavior per Orbit API limitations (Section 11.1)
 
@@ -3638,7 +3634,7 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 |-------|----------------------|
 | **Script Organization** | [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library) |
 | **Gateway Timer Scripts** | [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#timer-script) |
-| **Web Dev Module** | [Web Dev](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev) |
+| **Web Dev Module** | [Web Dev](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev) *(Optional - see Appendix A)* |
 | **HTTP Client** | [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient) |
 | **Named Queries** | [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries) |
 | **UDT Best Practices** | [User Defined Types](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts) |
@@ -3647,6 +3643,139 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 
 ---
 
+## Appendix A: Web Dev Webhook Approach (Future Reference)
+
+> **Note:** This appendix documents the webhook-based approach using the Web Dev module. The main plan uses polling (Section 6.6) which requires no additional module license. Use this appendix if you need real-time webhooks (< 5 second latency) and have the Web Dev module licensed.
+
+### A.1 When to Use Webhooks Instead of Polling
+
+| Requirement | Use Polling | Use Webhooks |
+|-------------|-------------|--------------|
+| Update latency acceptable: 30-60 seconds | ✅ Yes | Overkill |
+| Need real-time updates (< 5 seconds) | ❌ No | ✅ Yes |
+| Web Dev module already licensed | Either works | ✅ Yes |
+| Want to minimize license costs | ✅ Yes | ❌ Extra cost |
+| Multiple external systems pushing data | Consider webhooks | ✅ Yes |
+
+### A.2 Web Dev Module Setup
+
+**Prerequisites:**
+- Web Dev module must be installed and licensed (Gateway > Config > Modules)
+- Additional license cost (contact Inductive Automation)
+
+**Location:** Designer > Project Browser > Web Dev  
+**Resource Type:** Python Resource  
+**Resource Name:** `orbit/webhook`  
+**Endpoint URL:** `http://<gateway>:8088/system/webdev/<project>/orbit/webhook`  
+**Method:** POST (enable doPost)
+
+#### Web Dev Resource Configuration
+
+1. Right-click **Web Dev** in Project Browser → **New Python Resource**
+2. Name it `webhook` inside an `orbit` folder (creates `orbit/webhook`)
+3. Check **Enabled** for **doPost** method
+4. Optionally enable **Require HTTPS** for production
+5. Optionally enable **Require Authentication** with appropriate User Source
+
+### A.3 Webhook Endpoint Code
+
+```python
+"""
+Web Dev Endpoint: Receive Orbit webhook events
+Location: Designer > Project Browser > Web Dev > orbit/webhook
+Endpoint: POST /system/webdev/<project>/orbit/webhook
+
+Note: This requires Web Dev module license.
+      For no-cost alternative, use polling approach in Section 6.6.
+"""
+
+def doPost(request, session):
+    """
+    Handle incoming webhook from Orbit.
+    
+    Args:
+        request: Dictionary with keys: data, headers, params, remoteAddr, etc.
+        session: Dictionary for session state (cookies must be enabled)
+    
+    Returns:
+        dict: Response dictionary with 'json', 'html', or 'response' key
+    """
+    logger = system.util.getLogger("orbit.webhook")
+    
+    try:
+        # request["data"] is automatically parsed as dict when Content-Type is application/json
+        payload = request["data"]
+        
+        # If payload is string (non-JSON content type), parse it
+        if isinstance(payload, basestring):
+            import json
+            payload = json.loads(payload)
+        
+        event_type = payload.get("type", "")
+        logger.info("Received webhook: {} from {}".format(event_type, request["remoteAddr"]))
+        
+        # Route by event type - delegate to run_event_handlers module
+        if event_type.startswith("run"):
+            run_event_handlers.handle_run_event(payload)
+        else:
+            logger.warn("Unknown event type: {}".format(event_type))
+        
+        # Return JSON response
+        return {"json": {"status": "ok", "received": event_type}}
+        
+    except Exception as e:
+        logger.error("Webhook error: {}".format(str(e)))
+        return {"json": {"status": "error", "message": str(e)}}
+```
+
+### A.4 Testing Webhooks with curl
+
+```bash
+# Test on Windows CMD (single line):
+curl -X POST http://localhost:8088/system/webdev/SpotDemo/orbit/webhook -H "Content-Type: application/json" -d "{\"type\": \"run.completed\", \"data\": {\"uuid\": \"test-001\", \"missionName\": \"Test\", \"status\": \"completed\", \"robot\": {\"hostname\": \"spot-demo-01\"}}}"
+
+# Test on Linux/Mac:
+curl -X POST \
+  http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "run.completed",
+    "data": {
+      "uuid": "test-001",
+      "missionName": "Test Mission",
+      "status": "completed",
+      "robot": {"hostname": "spot-demo-01"}
+    }
+  }'
+
+# Expected Response:
+# {"status":"ok","received":"run.completed"}
+```
+
+### A.5 Configuring Orbit to Send Webhooks
+
+1. Access Orbit server admin console
+2. Navigate to Webhooks configuration
+3. Add new webhook:
+   - **URL:** `http://<ignition-gateway>:8088/system/webdev/<project>/orbit/webhook`
+   - **Events:** Select `run.started`, `run.completed`, `run.failed`
+   - **Format:** JSON
+
+### A.6 Hybrid Approach (Webhooks + Polling Backup)
+
+If using webhooks, keep polling as a backup with reduced frequency:
+
+```python
+# Gateway Timer Script: BackupPolling
+# Delay: 300000ms (5 minutes) - only catches missed webhooks
+
+runs_polling.poll_recent_runs()
+```
+
+This ensures data integrity even if webhooks are missed due to network issues.
+
+---
+
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.7 (Demo MVP) - PyDataSet Conversion Fix*  
+*Version: 2.8 (Demo MVP) - Polling-Based Architecture*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
