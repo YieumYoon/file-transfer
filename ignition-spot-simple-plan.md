@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.4 (Demo) - Named Query Default Value Handling Documentation  
+**Version:** 2.5 (Demo) - TEST_MODE for SMTP-Free Testing  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.5** | 2026-02-03 | **TEST_MODE for SMTP-Free Testing**<br>• Added `TEST_MODE` flag to `notification_engine` module for testing without SMTP configuration<br>• Updated `_send_and_log()` function to skip email sending when TEST_MODE=True<br>• Enhanced testing section with comprehensive guidance for development without SMTP<br>• Added expected results checklist (logs, database, tags) for Script Console tests<br>• Prevents SMTP errors from blocking webhook handler development workflow<br>• Enables full integration testing (DB updates, tag writes, notification logic) before production |
 | **2.4** | 2026-02-03 | **Named Query Default Value Handling Documentation**<br>• Added critical warning: Ignition 8.1 Named Queries do NOT have built-in default value feature<br>• Documented two approaches for handling defaults: Calling Code vs SQL COALESCE<br>• Updated all parameter tables to clarify "Recommended Default" vs "Required" columns<br>• Added SQL COALESCE() fallbacks to queries (`GetAllRobots`, `GetSiteConfig`, `GetMissionHistory`)<br>• Enhanced "Calling Named Queries from Scripts" section with proper default handling patterns<br>• Added helper function examples showing best practices for wrapping Named Queries<br>• Corrects common misconception about Named Query parameter configuration |
 | **2.3** | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems |
 | **2.2** | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping |
@@ -1784,6 +1785,16 @@ Scaling Options:
   - Phase 3 (Enterprise): Add deduplication, multi-channel routing, etc.
 """
 
+# ==============================================================================
+# TEST MODE CONFIGURATION
+# ==============================================================================
+# Set to True to skip actual email sending (logs notification intent only)
+# Set to False for production email sending when SMTP is configured
+# This allows testing webhook handlers, database updates, and tag writes
+# without requiring SMTP server configuration
+TEST_MODE = True  # Change to False when SMTP is ready
+# ==============================================================================
+
 def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_hostname):
     """
     Evaluate notification rules and send matching emails.
@@ -1897,6 +1908,16 @@ def _render_template(template, variables):
 def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body):
     """Send email and log the notification attempt."""
     logger = system.util.getLogger("orbit.notification.send")
+    
+    # Check TEST_MODE flag
+    if TEST_MODE:
+        logger.info("[TEST MODE] Notification evaluated - TO: {} | SUBJECT: {}".format(to_list, subject))
+        logger.info("[TEST MODE] Email not sent (TEST_MODE=True)")
+        _log_notification(
+            rule_id, run_uuid, trigger_type, to_list + cc_list, 
+            subject, body, True, "TEST_MODE: Email not sent"
+        )
+        return
     
     try:
         # Prefer config-driven SMTP and fromAddr (database, project properties, etc.).
@@ -2033,6 +2054,20 @@ rules = system.db.runNamedQuery(
 
 After implementing the webhook endpoint and handlers, test the integration to ensure everything works correctly.
 
+**Testing Strategy:**
+
+The webhook implementation includes a `TEST_MODE` flag in the `notification_engine` module that allows you to:
+- ✅ Test webhook processing, database updates, and tag writes
+- ✅ Verify notification logic without SMTP configuration
+- ✅ See what emails *would* be sent in gateway logs
+- ✅ Avoid SMTP errors blocking your development workflow
+
+**Quick Start:**
+1. Set `TEST_MODE = True` in `notification_engine` module (default)
+2. Run Script Console tests below
+3. Verify database and tag updates
+4. When SMTP is ready, set `TEST_MODE = False` to enable email sending
+
 #### 6.11.1 Test Preparation
 
 Before testing, ensure:
@@ -2043,72 +2078,106 @@ Before testing, ensure:
 - ✅ Named Queries are created (see section 6.12)
 - ✅ At least one notification rule exists in the database
 
+**Testing Without SMTP Configuration:**
+
+If SMTP is not yet configured, add a test mode flag to the notification engine to skip email sending. Add this at the top of the `notification_engine` module:
+
+```python
+# Test Mode Configuration
+# Set to True to skip actual email sending (logs only)
+# Set to False for production email sending
+TEST_MODE = True  # Change to False when SMTP is configured
+```
+
+Then modify the `_send_and_log` function to check this flag:
+
+```python
+def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body):
+    """Send email and log the notification attempt."""
+    logger = system.util.getLogger("orbit.notification.send")
+    
+    # Check test mode
+    if TEST_MODE:
+        logger.info("[TEST MODE] Would send notification to {}: {}".format(to_list, subject))
+        _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, True, "Test mode - not sent")
+        return
+    
+    try:
+        # ... rest of existing code ...
+```
+
+This allows you to test the entire webhook flow (database updates, tag writes, notification logic) without requiring SMTP configuration. When SMTP is ready, simply set `TEST_MODE = False`.
+
 #### 6.11.2 Method 1: Script Console Test (Recommended for Development)
 
 **Location:** Designer > Tools > Script Console
 
 This method tests the handler logic directly without requiring external HTTP calls.
 
+**Prerequisites:**
+- Ensure `TEST_MODE = True` is set in the `notification_engine` module if SMTP is not configured
+- This will test database updates, tag writes, and notification logic without sending actual emails
+
 ```python
 """
 Script Console Test: Simulate webhook event processing
 Run this in the Designer Script Console to test webhook handlers
+
+Note: Set TEST_MODE = True in notification_engine module to test without SMTP
 """
 
-# Test Case 1: Mission Started Event
-print "=" * 60
-print "TEST 1: Mission Started Event"
-print "=" * 60
+import system
+from project import webhook_handlers
 
-test_payload_started = {
-    "type": "run.started",
-    "data": {
-        "uuid": "test-run-001",
-        "missionName": "Daily Inspection",
-        "status": "started",
-        "robot": {
-            "hostname": "spot-demo-01"
-        }
+def run_test_1():
+    # Test Case 1: Mission Started Event
+    print "=" * 60
+    print "TEST 1: Mission Started Event"
+    print "=" * 60
+
+    test_payload_started = {
+        "type": "run.started",
+        "data": {
+            "uuid": "test-run-001",
+            "missionName": "Daily Inspection",
+            "status": "started",
+            "robot": {"hostname": "spot-demo-01"},
+        },
     }
-}
 
-try:
-    webhook_handlers.handle_run_event(test_payload_started)
-    print "✓ Mission started event processed"
-except Exception as e:
-    print "✗ Error: {}".format(str(e))
+    try:
+        webhook_handlers.handle_run_event(test_payload_started)
+        print "OK: Mission started event processed"
+    except Exception as e:
+        print "ERROR: {}".format(str(e))
 
-# Wait a moment for processing
-system.util.invokeLater(lambda: test_completed(), 2000)
+    # Wait a moment for processing
+    system.util.invokeLater(run_test_2, 2000)
 
-def test_completed():
+def run_test_2():
     # Test Case 2: Mission Completed Event
     print "\n" + "=" * 60
     print "TEST 2: Mission Completed Event"
     print "=" * 60
-    
     test_payload_completed = {
         "type": "run.completed",
         "data": {
             "uuid": "test-run-001",  # Same UUID to test update
             "missionName": "Daily Inspection",
             "status": "completed",
-            "robot": {
-                "hostname": "spot-demo-01"
-            }
-        }
+            "robot": {"hostname": "spot-demo-01"},
+        },
     }
-    
     try:
         webhook_handlers.handle_run_event(test_payload_completed)
-        print "✓ Mission completed event processed"
+        print "OK: Mission completed event processed"
     except Exception as e:
-        print "✗ Error: {}".format(str(e))
+        print "ERROR: {}".format(str(e))
     
     # Test Case 3: Mission Failed Event
-    system.util.invokeLater(lambda: test_failed(), 2000)
+    system.util.invokeLater(run_test_3, 2000)
 
-def test_failed():
+def run_test_3():
     print "\n" + "=" * 60
     print "TEST 3: Mission Failed Event"
     print "=" * 60
@@ -2119,17 +2188,15 @@ def test_failed():
             "uuid": "test-run-002",
             "missionName": "Emergency Response",
             "status": "failed",
-            "robot": {
-                "hostname": "spot-demo-01"
-            }
-        }
+            "robot": {"hostname": "spot-demo-01"},
+        },
     }
     
     try:
         webhook_handlers.handle_run_event(test_payload_failed)
-        print "✓ Mission failed event processed"
+        print "OK: Mission failed event processed"
     except Exception as e:
-        print "✗ Error: {}".format(str(e))
+        print "ERROR: {}".format(str(e))
     
     print "\n" + "=" * 60
     print "TEST COMPLETE - Check results below"
@@ -2139,7 +2206,55 @@ def test_failed():
 print "\nStarting webhook handler tests..."
 print "Check Gateway logs: Status > Diagnostics > Logs"
 print "Filter by: orbit.webhook\n"
+
+run_test_1()
 ```
+
+**Expected Results with TEST_MODE=True:**
+
+After running the test, verify the following:
+
+1. **Script Console Output:**
+   - Should show "OK: Mission started event processed" for each test
+   - No SMTP-related errors should appear
+
+2. **Gateway Logs** (Status > Diagnostics > Logs):
+   ```
+   Filter by: orbit.notification
+   Expected log entries:
+   - "[TEST MODE] Notification evaluated - TO: ['test@example.com']"
+   - "[TEST MODE] Email not sent (TEST_MODE=True)"
+   ```
+
+3. **Database Verification:**
+   ```sql
+   -- Check runs table was updated
+   SELECT * FROM orbit_runs WHERE run_uuid IN ('test-run-001', 'test-run-002');
+   
+   -- Check notification history was logged
+   SELECT * FROM orbit_notification_history 
+   WHERE run_uuid IN ('test-run-001', 'test-run-002')
+   ORDER BY created_at_utc DESC;
+   
+   -- You should see error_message = 'TEST_MODE: Email not sent'
+   ```
+
+4. **Tag Values** (Designer > Tag Browser):
+   ```
+   [default]Demo/Robots/spot-demo-01/
+     - MissionId: "test-run-002"
+     - MissionName: "Emergency Response"
+     - MissionStatusCode: should match last test
+     - LastRunAtUtc: recent timestamp
+   ```
+
+**When to Disable TEST_MODE:**
+
+Once SMTP is configured (see Section X for SMTP setup), disable test mode:
+1. Open `notification_engine` module
+2. Change `TEST_MODE = False`
+3. Re-run tests - emails should now be sent
+4. Verify emails are received by checking your inbox
 
 #### 6.11.3 Method 2: HTTP Endpoint Test (Production-Ready)
 
@@ -3174,21 +3289,21 @@ flowchart TB
 
 ### Phase 5: Named Queries (Day 3)
 
-- [ ] Create Named Queries:
-  - [ ] `GetMissionHistory` - Query with Value Parameters
-  - [ ] `UpsertRun` - Update Query with MERGE
-  - [ ] `GetNotificationRules` - Query
-  - [ ] `GetRobotByHostname` - Query
-  - [ ] `InsertNotificationHistory` - Update Query
-  - [ ] `GetNotificationRecipients` - Query
-  - [ ] `GetRunNotificationContext` - Query
-- [ ] Test each query using Named Query test interface
-- [ ] Update Project Library to use Named Queries
+- [x] Create Named Queries:
+  - [x] `GetMissionHistory` - Query with Value Parameters
+  - [x] `UpsertRun` - Update Query with MERGE
+  - [x] `GetNotificationRules` - Query
+  - [x] `GetRobotByHostname` - Query
+  - [x] `InsertNotificationHistory` - Update Query
+  - [x] `GetNotificationRecipients` - Query
+  - [x] `GetRunNotificationContext` - Query
+- [x] Test each query using Named Query test interface
+- [x] Update Project Library to use Named Queries
 
 ### Phase 6: Webhook Flow (Day 3-4)
 
-- [ ] Verify Web Dev Module is installed (Gateway > Config > Modules)
-- [ ] Create Web Dev Python Resource:
+- [x] Verify Web Dev Module is installed (Gateway > Config > Modules)
+- [x] Create Web Dev Python Resource:
   - Designer > Project Browser > Web Dev
   - Create folder `orbit`, then resource `webhook`
   - Enable `doPost` method
@@ -3543,5 +3658,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.4 (Demo MVP) - Named Query Default Value Handling Documentation*  
+*Version: 2.5 (Demo MVP) - TEST_MODE for SMTP-Free Testing*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
