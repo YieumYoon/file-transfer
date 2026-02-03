@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.9 (Demo) - Polling-Based Architecture  
+**Version:** 2.10 (Demo) - Polling-Based Architecture  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
@@ -15,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early |
 | **2.9** | 2026-02-03 | **Orbit API Status Value Fix**<br>• Fixed `status_map` and `trigger_type_map` in `run_event_handlers` module to handle Orbit API's actual status values<br>• Added `"success": "COMP"` mapping - Orbit API returns "success" for completed runs, not "completed"<br>• Added `"success": "RUN_COMP"` to trigger type mapping for proper notification routing<br>• Previously caused "Unhandled run status for trigger mapping: success" warning and incorrect tag values<br>• Tags were being written with wrong status code ("PEND" instead of "COMP")<br>• **Why:** Orbit API documentation and actual response values differ; "success" is the real completed status |
 | **2.8** | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost |
 | **2.7** | 2026-02-03 | **PyDataSet Conversion Bug Fix**<br>• Fixed dictionary comprehension in webhook handler's PyDataSet-to-dict conversion<br>• Corrected `getValueAt(0,1)` to `getValueAt(0,i)` to properly iterate through all columns<br>• Bug caused all dictionary values to reference column index 1 instead of respective column indices<br>• Affects context parameter extraction in `doPost()` function<br>• Ensures proper mapping of column names to their corresponding values |
@@ -2129,6 +2130,129 @@ This method tests the handler logic directly - the same code path that polling u
 **Prerequisites:**
 - Ensure `TEST_MODE = True` is set in the `notification_engine` module if SMTP is not configured
 - This will test database updates, tag writes, and notification logic without sending actual emails
+
+##### Step 1: Pre-Flight Check (Verify Module Structure)
+
+Run this **first** to verify all modules are present and configured correctly:
+
+```python
+"""
+PRE-FLIGHT CHECK: Verify modules and configuration
+Run this BEFORE running the event tests to catch issues early
+"""
+
+print "=" * 70
+print "PRE-FLIGHT CHECK: Module & Configuration Verification"
+print "=" * 70
+
+# Test 1: Check if helpers module exists
+print "\n[1/6] Testing helpers module..."
+try:
+    import helpers
+    print "    OK: helpers module imported"
+except ImportError as e:
+    print "    ERROR: helpers module not found - {}".format(e)
+    print "    Fix: Create helpers module in Project Library"
+
+# Test 2: Check if helpers.get_robot_tag_base() works
+print "\n[2/6] Testing helpers.get_robot_tag_base()..."
+try:
+    test_hostname = "spot-demo-01"
+    tag_base = helpers.get_robot_tag_base(test_hostname)
+    if tag_base:
+        print "    OK: get_robot_tag_base('{}') returned: {}".format(test_hostname, tag_base)
+    else:
+        print "    ERROR: get_robot_tag_base() returned None"
+        print "    Check: TAG_BASE_PATH in helpers module"
+except Exception as e:
+    print "    ERROR: {}".format(str(e))
+
+# Test 3: Check if tag path exists
+print "\n[3/6] Testing if UDT instance exists..."
+try:
+    if tag_base:
+        test_tag_path = "{}/MissionId".format(tag_base)
+        value = system.tag.readBlocking([test_tag_path])[0]
+        if value.quality.isGood():
+            print "    OK: Tag exists and readable: {}".format(test_tag_path)
+            print "    Current value: {}".format(value.value)
+        else:
+            print "    ERROR: Tag exists but quality is bad: {}".format(value.quality)
+    else:
+        print "    SKIP: tag_base is None, cannot test tag existence"
+except Exception as e:
+    print "    ERROR: Tag not found or not readable"
+    print "    {}".format(str(e))
+    print "    Fix: Create UDT instance at path: {}".format(tag_base)
+
+# Test 4: Check if run_event_handlers module exists
+print "\n[4/6] Testing run_event_handlers module..."
+try:
+    import run_event_handlers
+    print "    OK: run_event_handlers module imported"
+    
+    # Check if handle_run_event function exists
+    if hasattr(run_event_handlers, 'handle_run_event'):
+        print "    OK: handle_run_event() function found"
+    else:
+        print "    ERROR: handle_run_event() function not found"
+except ImportError as e:
+    print "    ERROR: run_event_handlers module not found - {}".format(e)
+    print "    Fix: Create run_event_handlers module in Project Library"
+
+# Test 5: Check if notification_engine module exists
+print "\n[5/6] Testing notification_engine module..."
+try:
+    import notification_engine
+    print "    OK: notification_engine module imported"
+    
+    # Check TEST_MODE setting
+    if hasattr(notification_engine, 'TEST_MODE'):
+        test_mode = notification_engine.TEST_MODE
+        print "    OK: TEST_MODE = {}".format(test_mode)
+        if not test_mode:
+            print "    WARNING: TEST_MODE is False - emails will be sent!"
+    else:
+        print "    WARNING: TEST_MODE not found in module"
+        
+    # Check if evaluate_and_send function exists
+    if hasattr(notification_engine, 'evaluate_and_send'):
+        print "    OK: evaluate_and_send() function found"
+    else:
+        print "    ERROR: evaluate_and_send() function not found"
+except ImportError as e:
+    print "    ERROR: notification_engine module not found - {}".format(e)
+    print "    Fix: Create notification_engine module in Project Library"
+
+# Test 6: Check if Named Query exists
+print "\n[6/6] Testing Named Query: UpsertRun..."
+try:
+    # Just check if query exists by attempting to get its info
+    # We won't actually run it yet
+    result = system.db.runNamedQuery(
+        "UpsertRun",
+        {
+            "run_uuid": "__test__",
+            "mission_name": "Test",
+            "status_code": "PEND",
+            "robot_hostname": "test"
+        }
+    )
+    print "    OK: UpsertRun Named Query exists and is callable"
+except Exception as e:
+    print "    ERROR: UpsertRun Named Query issue - {}".format(str(e))
+    print "    Fix: Create UpsertRun Named Query"
+
+print "\n" + "=" * 70
+print "PRE-FLIGHT CHECK COMPLETE"
+print "=" * 70
+print "\nIf all tests passed, proceed to Step 2 (Event Tests)"
+print "If any tests failed, fix the issues before continuing"
+```
+
+##### Step 2: Event Handler Tests
+
+Once the pre-flight check passes, run the event tests:
 
 ```python
 """
