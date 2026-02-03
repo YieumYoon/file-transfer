@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.5 (Demo) - TEST_MODE for SMTP-Free Testing  
+**Version:** 2.6 (Demo) - Simplified Script Console Tests  
 **Last Updated:** 2026-02-03
 
 > **Key Documentation References:**
@@ -16,6 +16,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.6** | 2026-02-03 | **Simplified Script Console Test Pattern**<br>• Removed `system.util.invokeLater()` pattern from Script Console tests (function does not exist in Ignition 8.1)<br>• Restructured test script from three separate functions to sequential execution<br>• Tests now run immediately one after another without delays<br>• Simplified output formatting for cleaner console results<br>• Improves usability for developers testing webhook handlers in Script Console |
 | **2.5** | 2026-02-03 | **TEST_MODE for SMTP-Free Testing**<br>• Added `TEST_MODE` flag to `notification_engine` module for testing without SMTP configuration<br>• Updated `_send_and_log()` function to skip email sending when TEST_MODE=True<br>• Enhanced testing section with comprehensive guidance for development without SMTP<br>• Added expected results checklist (logs, database, tags) for Script Console tests<br>• Prevents SMTP errors from blocking webhook handler development workflow<br>• Enables full integration testing (DB updates, tag writes, notification logic) before production |
 | **2.4** | 2026-02-03 | **Named Query Default Value Handling Documentation**<br>• Added critical warning: Ignition 8.1 Named Queries do NOT have built-in default value feature<br>• Documented two approaches for handling defaults: Calling Code vs SQL COALESCE<br>• Updated all parameter tables to clarify "Recommended Default" vs "Required" columns<br>• Added SQL COALESCE() fallbacks to queries (`GetAllRobots`, `GetSiteConfig`, `GetMissionHistory`)<br>• Enhanced "Calling Named Queries from Scripts" section with proper default handling patterns<br>• Added helper function examples showing best practices for wrapping Named Queries<br>• Corrects common misconception about Named Query parameter configuration |
 | **2.3** | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems |
@@ -2126,88 +2127,74 @@ Run this in the Designer Script Console to test webhook handlers
 Note: Set TEST_MODE = True in notification_engine module to test without SMTP
 """
 
-import system
-from project import webhook_handlers
+# Test Case 1: Mission Started Event
+print "=" * 60
+print "TEST 1: Mission Started Event"
+print "=" * 60
 
-def run_test_1():
-    # Test Case 1: Mission Started Event
-    print "=" * 60
-    print "TEST 1: Mission Started Event"
-    print "=" * 60
+test_payload_started = {
+    "type": "run.started",
+    "data": {
+        "uuid": "test-run-001",
+        "missionName": "Daily Inspection",
+        "status": "started",
+        "robot": {"hostname": "spot-demo-01"},
+    },
+}
 
-    test_payload_started = {
-        "type": "run.started",
-        "data": {
-            "uuid": "test-run-001",
-            "missionName": "Daily Inspection",
-            "status": "started",
-            "robot": {"hostname": "spot-demo-01"},
-        },
-    }
+try:
+    webhook_handlers.handle_run_event(test_payload_started)
+    print "OK: Mission started event processed"
+except Exception as e:
+    print "ERROR: {}".format(str(e))
 
-    try:
-        webhook_handlers.handle_run_event(test_payload_started)
-        print "OK: Mission started event processed"
-    except Exception as e:
-        print "ERROR: {}".format(str(e))
+# Test Case 2: Mission Completed Event
+print "\n" + "=" * 60
+print "TEST 2: Mission Completed Event"
+print "=" * 60
 
-    # Wait a moment for processing
-    system.util.invokeLater(run_test_2, 2000)
+test_payload_completed = {
+    "type": "run.completed",
+    "data": {
+        "uuid": "test-run-001",  # Same UUID to test update
+        "missionName": "Daily Inspection",
+        "status": "completed",
+        "robot": {"hostname": "spot-demo-01"},
+    },
+}
 
-def run_test_2():
-    # Test Case 2: Mission Completed Event
-    print "\n" + "=" * 60
-    print "TEST 2: Mission Completed Event"
-    print "=" * 60
-    test_payload_completed = {
-        "type": "run.completed",
-        "data": {
-            "uuid": "test-run-001",  # Same UUID to test update
-            "missionName": "Daily Inspection",
-            "status": "completed",
-            "robot": {"hostname": "spot-demo-01"},
-        },
-    }
-    try:
-        webhook_handlers.handle_run_event(test_payload_completed)
-        print "OK: Mission completed event processed"
-    except Exception as e:
-        print "ERROR: {}".format(str(e))
-    
-    # Test Case 3: Mission Failed Event
-    system.util.invokeLater(run_test_3, 2000)
+try:
+    webhook_handlers.handle_run_event(test_payload_completed)
+    print "OK: Mission completed event processed"
+except Exception as e:
+    print "ERROR: {}".format(str(e))
 
-def run_test_3():
-    print "\n" + "=" * 60
-    print "TEST 3: Mission Failed Event"
-    print "=" * 60
-    
-    test_payload_failed = {
-        "type": "run.failed",
-        "data": {
-            "uuid": "test-run-002",
-            "missionName": "Emergency Response",
-            "status": "failed",
-            "robot": {"hostname": "spot-demo-01"},
-        },
-    }
-    
-    try:
-        webhook_handlers.handle_run_event(test_payload_failed)
-        print "OK: Mission failed event processed"
-    except Exception as e:
-        print "ERROR: {}".format(str(e))
-    
-    print "\n" + "=" * 60
-    print "TEST COMPLETE - Check results below"
-    print "=" * 60
+# Test Case 3: Mission Failed Event
+print "\n" + "=" * 60
+print "TEST 3: Mission Failed Event"
+print "=" * 60
 
-# Start the test sequence
-print "\nStarting webhook handler tests..."
+test_payload_failed = {
+    "type": "run.failed",
+    "data": {
+        "uuid": "test-run-002",
+        "missionName": "Emergency Response",
+        "status": "failed",
+        "robot": {"hostname": "spot-demo-01"},
+    },
+}
+
+try:
+    webhook_handlers.handle_run_event(test_payload_failed)
+    print "OK: Mission failed event processed"
+except Exception as e:
+    print "ERROR: {}".format(str(e))
+
+print "\n" + "=" * 60
+print "TEST COMPLETE - Check results below"
+print "=" * 60
 print "Check Gateway logs: Status > Diagnostics > Logs"
-print "Filter by: orbit.webhook\n"
-
-run_test_1()
+print "Filter by: orbit.webhook"
 ```
 
 **Expected Results with TEST_MODE=True:**
@@ -3658,5 +3645,5 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.5 (Demo MVP) - TEST_MODE for SMTP-Free Testing*  
+*Version: 2.6 (Demo MVP) - Simplified Script Console Tests*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
