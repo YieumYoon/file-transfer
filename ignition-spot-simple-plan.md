@@ -1,8 +1,8 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.11 (Demo) - Polling-Based Architecture  
-**Last Updated:** 2026-02-03
+**Version:** 2.12 (Demo) - Polling-Based Architecture  
+**Last Updated:** 2026-02-04
 
 > **Key Documentation References:**
 > - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
@@ -15,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.12** | 2026-02-04 | **PyDataset Row Access Fix**<br>• Fixed `.get()` method usage in `evaluate_and_send()` function - replaced `rule.get("RuleName", default)` with bracket notation<br>• Fixed `.get()` method usage in `handle_run_event()` function - replaced nested `.get()` calls with bracket notation for consistency<br>• PyDataset row objects (Java objects) support bracket notation `[]` and `in` operator but do NOT have `.get()` method<br>• Updated pattern: use `row["ColName"] if "ColName" in row else default` instead of `row.get("ColName", default)`<br>• **Why:** Calling `.get()` on PyDataset row objects causes runtime errors; bracket notation is the correct approach for both PyDataset rows and dictionaries |
 | **2.11** | 2026-02-03 | **Enhanced Logging for Monitoring and Troubleshooting**<br>• Added comprehensive logging to all database query operations (UpsertRun, GetSiteConfig, GetRunNotificationContext, GetNotificationRules, GetNotificationRecipients, InsertNotificationHistory)<br>• Enhanced logging in `poll_recent_runs()`: API fetch start, run counts, status change detection<br>• Enhanced logging in `handle_run_event()`: event details, status mapping, warnings for unknown statuses<br>• Enhanced logging in `_update_mission_tags()`: tag write counts, success/error summaries<br>• Enhanced logging in `evaluate_and_send()`: rule evaluation, recipient matching, pattern validation<br>• Added new section 7.5: Logging Reference with logger hierarchy, recommended levels, sample messages, and troubleshooting guide<br>• Loggers now track: query parameters, row counts, status changes, API responses, notification matching, email sending<br>• **Why:** Makes it easy to monitor system status and troubleshoot issues in production |
 | **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early |
 | **2.9** | 2026-02-03 | **Orbit API Status Value Fix**<br>• Fixed `status_map` and `trigger_type_map` in `run_event_handlers` module to handle Orbit API's actual status values<br>• Added `"success": "COMP"` mapping - Orbit API returns "success" for completed runs, not "completed"<br>• Added `"success": "RUN_COMP"` to trigger type mapping for proper notification routing<br>• Previously caused "Unhandled run status for trigger mapping: success" warning and incorrect tag values<br>• Tags were being written with wrong status code ("PEND" instead of "COMP")<br>• **Why:** Orbit API documentation and actual response values differ; "success" is the real completed status |
@@ -1718,11 +1719,12 @@ def handle_run_event(payload):
     """
     logger = system.util.getLogger("orbit.run_event")
     
-    run_data = payload.get("data", {})
-    run_uuid = run_data.get("uuid", "")
-    mission_name = run_data.get("missionName", "")
-    status = run_data.get("status", "")  # started, completed, failed
-    robot_hostname = run_data.get("robot", {}).get("hostname", "")
+    run_data = payload["data"] if "data" in payload else {}
+    run_uuid = run_data["uuid"] if "uuid" in run_data else ""
+    mission_name = run_data["missionName"] if "missionName" in run_data else ""
+    status = run_data["status"] if "status" in run_data else ""  # started, completed, failed
+    robot_data = run_data["robot"] if "robot" in run_data else {}
+    robot_hostname = robot_data["hostname"] if "hostname" in robot_data else ""
     
     logger.info("Processing run event: uuid={}, mission={}, status={}, robot={}".format(
         run_uuid, mission_name, status, robot_hostname))
@@ -1932,7 +1934,7 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
     for rule in rules:
         rule_id = rule["NotificationRuleId"]
         pattern = rule["MissionNamePattern"]
-        rule_name = rule.get("RuleName", "Rule #{}".format(rule_id))
+        rule_name = rule["RuleName"] if "RuleName" in rule else "Rule #{}".format(rule_id)
         
         logger.debug("Processing rule: {} (id={})".format(rule_name, rule_id))
         

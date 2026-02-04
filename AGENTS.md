@@ -113,6 +113,7 @@ if result and result.getRowCount() > 0:
 | Column count | N/A | `dataset.getColumnCount()` |
 | Column names | N/A | `dataset.getColumnName(index)` |
 | Get value | `dataset[row][col]` | `dataset.getValueAt(row, col)` or `dataset.getValueAt(row, "ColName")` |
+| Get value (with default) | `row.get("ColName", default)` | `row["ColName"] if "ColName" in row else default` |
 | Iterate rows | `for row in dataset:` | Works, but `row` is not a dict! |
 | Convert to dict | `dict(row)` | Manual loop with `getValueAt()` |
 
@@ -153,17 +154,30 @@ for rule in result:  # rule is a PyDataset row object
     # Note: rule is NOT a dict, but supports [] access
 ```
 
-**Pattern 4: Check for Results**
+**Pattern 4: Access Optional Fields with Default Values**
+```python
+result = system.db.runNamedQuery("GetNotificationRules", params)
+for rule in result:
+    rule_id = rule["NotificationRuleId"]
+    
+    # ❌ WRONG - .get() method doesn't exist
+    rule_name = rule.get("RuleName", "Rule #{}".format(rule_id))
+    
+    # ✅ CORRECT - use bracket notation with conditional
+    rule_name = rule["RuleName"] if "RuleName" in rule else "Rule #{}".format(rule_id)
+```
+
+**Pattern 5: Check for Results**
 ```python
 result = system.db.runNamedQuery("GetRecipients", {"rule_id": 5})
 
 # ❌ WRONG
 if not result or len(result) == 0:
-    return
+ return
 
 # ✅ CORRECT
 if not result or result.getRowCount() == 0:
-    return
+ return
 ```
 
 #### Why This Matters
@@ -172,6 +186,7 @@ if not result or result.getRowCount() == 0:
 2. **`len()` may not work** - PyDataset doesn't always support Python's `len()`
 3. **`getValueAt(0, 1)` bug** - using wrong index in comprehensions copies same column repeatedly
 4. **Loop variable confusion** - `for row in dataset:` gives PyDataset row, not dict
+5. **`.get()` doesn't exist** - PyDataset rows are Java objects, not Python dicts; they don't have `.get()`, `.keys()`, `.values()` methods
 
 #### Testing PyDataset Code
 
@@ -188,12 +203,18 @@ print "First row:", result.getValueAt(0, 0), result.getValueAt(0, 1)
 
 #### Historical Context
 
-This mistake appeared in `ignition-spot-simple-plan.md` v2.7 and was fixed in v2.11:
-- `get_site_config()`: Used `dict(result[0])` - failed to convert
-- `evaluate_and_send()`: Used `getValueAt(0, 1)` instead of `getValueAt(0, i)` - copied wrong column
-- Test verification functions: Used `len(ds)` instead of `ds.getRowCount()`
+This mistake appeared in `ignition-spot-simple-plan.md` multiple times:
+- **v2.7:** `get_site_config()` used `dict(result[0])` - failed to convert (fixed in v2.11)
+- **v2.7:** `evaluate_and_send()` used `getValueAt(0, 1)` instead of `getValueAt(0, i)` - copied wrong column (fixed in v2.11)
+- **v2.11:** Test verification functions used `len(ds)` instead of `ds.getRowCount()` (fixed in v2.11)
+- **v2.11:** `evaluate_and_send()` used `rule.get("RuleName", ...)` - `.get()` method doesn't exist on PyDataset row objects (fixed in v2.12)
 
-**Prevention:** Always use PyDataset methods (`getRowCount()`, `getValueAt()`, etc.) when working with Named Query results.
+**Root Cause:** PyDataset rows are Java objects that implement a subset of Python dict-like behavior (bracket notation `[]`, `in` operator) but do NOT support Python dict methods (`.get()`, `.keys()`, `.values()`, etc.)
+
+**Prevention:** 
+- Always use PyDataset methods (`getRowCount()`, `getValueAt()`, etc.) when working with Named Query results
+- Use bracket notation `row["ColName"]` instead of `row.get("ColName", default)`
+- For optional fields, use: `row["ColName"] if "ColName" in row else default`
 
 ---
 
