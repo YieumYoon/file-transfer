@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.12 (Demo) - Polling-Based Architecture  
+**Version:** 2.13 (Demo) - Use Actual Timestamps from Orbit API
 **Last Updated:** 2026-02-04
 
 > **Key Documentation References:**
@@ -15,6 +15,7 @@
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| **2.13** | 2026-02-04 | **Use Actual Timestamps from Orbit API**<br>• Fixed `UpsertRun` Named Query to use actual `startTime` and `endTime` from Orbit API instead of `SYSUTCDATETIME()`<br>• Added `start_time` and `end_time` parameters to `UpsertRun` Named Query<br>• Updated `_process_run_event()` to pass `startTime` and `endTime` in the payload<br>• Updated `handle_run_event()` to extract timestamps and pass to `_upsert_run()`<br>• Updated `_upsert_run()` to accept and pass timestamps to Named Query<br>• `CompletedAtUtc` now records actual failure/completion time, not polling discovery time<br>• `DurationMinutes` calculation is now accurate (previously could be 60+ seconds off)<br>• Uses `COALESCE()` to fall back to server time if API timestamp is null<br>• **Why:** When a mission fails at 10:00:00 but polling detects it at 10:01:00, the DB should record 10:00:00 (actual failure time), not 10:01:00 |
 | **2.12** | 2026-02-04 | **PyDataset Row Access Fix**<br>• Fixed `.get()` method usage in `evaluate_and_send()` function - replaced `rule.get("RuleName", default)` with bracket notation<br>• Fixed `.get()` method usage in `handle_run_event()` function - replaced nested `.get()` calls with bracket notation for consistency<br>• PyDataset row objects (Java objects) support bracket notation `[]` and `in` operator but do NOT have `.get()` method<br>• Updated pattern: use `row["ColName"] if "ColName" in row else default` instead of `row.get("ColName", default)`<br>• **Why:** Calling `.get()` on PyDataset row objects causes runtime errors; bracket notation is the correct approach for both PyDataset rows and dictionaries |
 | **2.11** | 2026-02-03 | **Enhanced Logging for Monitoring and Troubleshooting**<br>• Added comprehensive logging to all database query operations (UpsertRun, GetSiteConfig, GetRunNotificationContext, GetNotificationRules, GetNotificationRecipients, InsertNotificationHistory)<br>• Enhanced logging in `poll_recent_runs()`: API fetch start, run counts, status change detection<br>• Enhanced logging in `handle_run_event()`: event details, status mapping, warnings for unknown statuses<br>• Enhanced logging in `_update_mission_tags()`: tag write counts, success/error summaries<br>• Enhanced logging in `evaluate_and_send()`: rule evaluation, recipient matching, pattern validation<br>• Added new section 7.5: Logging Reference with logger hierarchy, recommended levels, sample messages, and troubleshooting guide<br>• Loggers now track: query parameters, row counts, status changes, API responses, notification matching, email sending<br>• **Why:** Makes it easy to monitor system status and troubleshoot issues in production |
 | **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early |
@@ -1286,12 +1287,15 @@ def _process_run_event(run):
     
     # Build payload in same format as webhook would send
     # This allows run_event_handlers to work with both polling and webhooks
+    # v2.13: Include startTime and endTime for accurate DB timestamps
     payload = {
         "type": event_type,
         "data": {
             "uuid": run_uuid,
             "missionName": mission_name,
             "status": orbit_status,
+            "startTime": run.get("startTime"),   # ISO timestamp from Orbit API
+            "endTime": run.get("endTime"),       # ISO timestamp from Orbit API (null if running)
             "robot": {
                 "hostname": robot_hostname
             }
@@ -1726,6 +1730,10 @@ def handle_run_event(payload):
     robot_data = run_data["robot"] if "robot" in run_data else {}
     robot_hostname = robot_data["hostname"] if "hostname" in robot_data else ""
     
+    # v2.13: Extract actual timestamps from Orbit API for accurate DB records
+    start_time = run_data["startTime"] if "startTime" in run_data else None  # ISO timestamp
+    end_time = run_data["endTime"] if "endTime" in run_data else None        # ISO timestamp (null if running)
+    
     logger.info("Processing run event: uuid={}, mission={}, status={}, robot={}".format(
         run_uuid, mission_name, status, robot_hostname))
     
@@ -1743,8 +1751,8 @@ def handle_run_event(payload):
     if status not in status_map:
         logger.warn("Unknown status '{}' for run {}, defaulting to PEND".format(status, run_uuid))
     
-    # 1. Upsert to database using Named Query
-    _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname)
+    # 1. Upsert to database using Named Query (with actual timestamps)
+    _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname, start_time, end_time)
     
     # 2. Update mission tags
     _update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
@@ -1766,25 +1774,39 @@ def handle_run_event(payload):
     logger.info("Processed run event: {} - {}".format(mission_name, mission_status_code))
 
 
-def _upsert_run(run_uuid, mission_name, status_code, robot_hostname):
+def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=None, end_time=None):
     """
     Insert or update run in database using Named Query.
     Uses atomic MERGE operation for thread safety.
+    
+    v2.13: Now accepts start_time and end_time from Orbit API for accurate timestamps.
+           Falls back to server time (SYSUTCDATETIME) if API timestamps are null.
+    
+    Args:
+        run_uuid: Orbit run UUID
+        mission_name: Mission name
+        status_code: Status code (RUN, COMP, FAIL, PEND)
+        robot_hostname: Robot hostname for FK lookup
+        start_time: ISO timestamp string from Orbit API (optional)
+        end_time: ISO timestamp string from Orbit API (optional, null if running)
     """
     logger = system.util.getLogger("orbit.run_event.db")
     
     try:
-        logger.debug("Upserting run: uuid={}, mission={}, status={}, robot={}".format(
-            run_uuid, mission_name, status_code, robot_hostname))
+        logger.debug("Upserting run: uuid={}, mission={}, status={}, robot={}, start={}, end={}".format(
+            run_uuid, mission_name, status_code, robot_hostname, start_time, end_time))
         
         # Use Named Query for secure, maintainable database access
+        # v2.13: Pass actual timestamps from Orbit API
         rows_affected = system.db.runNamedQuery(
             "UpsertRun",
             {
                 "run_uuid": run_uuid,
                 "mission_name": mission_name,
                 "status_code": status_code,
-                "robot_hostname": robot_hostname
+                "robot_hostname": robot_hostname,
+                "start_time": start_time,   # ISO string or None
+                "end_time": end_time         # ISO string or None
             }
         )
         
@@ -2361,6 +2383,8 @@ test_payload_started = {
         "uuid": "test-run-001",
         "missionName": "Daily Inspection",
         "status": "started",
+        "startTime": "2026-02-04T10:30:00.000Z",  # v2.13: Actual start time from Orbit API
+        "endTime": None,                          # v2.13: Null because still running
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -2383,6 +2407,8 @@ test_payload_completed = {
         "uuid": "test-run-001",  # Same UUID to test update
         "missionName": "Daily Inspection",
         "status": "success",  # Orbit API uses "success", not "completed"
+        "startTime": "2026-02-04T10:30:00.000Z",  # v2.13: Actual start time from Orbit API
+        "endTime": "2026-02-04T10:45:30.000Z",    # v2.13: Actual end time (15.5 min duration)
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -2404,6 +2430,8 @@ test_payload_failed = {
         "uuid": "test-run-002",
         "missionName": "Emergency Response",
         "status": "failed",
+        "startTime": "2026-02-04T11:00:00.000Z",  # v2.13: Actual start time from Orbit API
+        "endTime": "2026-02-04T11:05:15.000Z",    # v2.13: Actual failure time (5.25 min into mission)
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -3201,6 +3229,9 @@ OFFSET 0 ROWS FETCH NEXT COALESCE(:limit, 100) ROWS ONLY
 **Type:** Update Query  
 **Database:** MSSQL_Robotics
 
+> **v2.13 Update:** Now uses actual `startTime` and `endTime` from Orbit API instead of server time.
+> This ensures `CompletedAtUtc` records the actual failure/completion time, and `DurationMinutes` is accurate.
+
 **Parameters:**
 | Name | Type | Required | Notes |
 |------|------|----------|-------|
@@ -3208,16 +3239,22 @@ OFFSET 0 ROWS FETCH NEXT COALESCE(:limit, 100) ROWS ONLY
 | mission_name | String | No | Pass `None` if unknown |
 | status_code | String | Yes | e.g., `RUN`, `COMP`, `FAIL` |
 | robot_hostname | String | Yes | Robot hostname for FK lookup |
+| start_time | String | No | ISO timestamp from Orbit API (e.g., `2026-02-04T10:30:00.000Z`) |
+| end_time | String | No | ISO timestamp from Orbit API (null if still running) |
 
 ```sql
 -- Named Query: UpsertRun
 -- Uses MERGE for atomic upsert operation
+-- v2.13: Uses actual timestamps from Orbit API for accurate duration calculations
 MERGE INTO RoboticsRuns AS target
 USING (
     SELECT 
         :run_uuid AS OrbitRunUuid,
         :mission_name AS MissionName,
         :status_code AS MissionStatusCode,
+        -- Convert ISO string to DATETIME2; COALESCE falls back to server time if null
+        TRY_CONVERT(DATETIME2(3), :start_time) AS StartTime,
+        TRY_CONVERT(DATETIME2(3), :end_time) AS EndTime,
         r.RobotId,
         r.SiteId
     FROM RoboticsRobots r
@@ -3227,14 +3264,29 @@ ON target.OrbitRunUuid = source.OrbitRunUuid
 WHEN MATCHED THEN
     UPDATE SET 
         MissionStatusCode = source.MissionStatusCode,
+        -- Use actual end time from Orbit API; fall back to server time only if API timestamp is null
         CompletedAtUtc = CASE 
-            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') THEN SYSUTCDATETIME() 
+            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') 
+            THEN COALESCE(source.EndTime, SYSUTCDATETIME())
             ELSE target.CompletedAtUtc 
         END
 WHEN NOT MATCHED THEN
-    INSERT (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc)
-    VALUES (source.SiteId, source.RobotId, source.OrbitRunUuid, source.MissionName, 
-            source.MissionStatusCode, SYSUTCDATETIME());
+    INSERT (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc)
+    VALUES (
+        source.SiteId, 
+        source.RobotId, 
+        source.OrbitRunUuid, 
+        source.MissionName, 
+        source.MissionStatusCode,
+        -- Use actual start time from Orbit API; fall back to server time only if API timestamp is null
+        COALESCE(source.StartTime, SYSUTCDATETIME()),
+        -- Only set CompletedAtUtc on INSERT if status is already COMP or FAIL
+        CASE 
+            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') 
+            THEN source.EndTime 
+            ELSE NULL 
+        END
+    );
 ```
 
 #### GetNotificationRecipients
@@ -4160,5 +4212,5 @@ This ensures data integrity even if webhooks are missed due to network issues.
 ---
 
 *Document maintained by: AME-Junsu Lee*  
-*Version: 2.8 (Demo MVP) - Polling-Based Architecture*  
+*Version: 2.13 (Demo MVP) - Use Actual Timestamps from Orbit API*  
 *Based on: ignition-spot-long-plan.md (Enterprise Version)*
