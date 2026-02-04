@@ -1,7 +1,7 @@
 # Spot Mission → Orbit → Ignition Perspective Integration (Demo MVP)
 
 **Project:** Spot Robot Mission Notification System (Simplified)  
-**Version:** 2.13 (Demo) - Use Actual Timestamps from Orbit API
+**Version:** 2.15 (Demo) - API Response Alignment + MissionId Support
 **Last Updated:** 2026-02-04
 
 > **Key Documentation References:**
@@ -16,6 +16,8 @@
 
 | Version  | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **2.15** | 2026-02-04 | **API Response Alignment + MissionId Support**<br>• Updated `get_runs()` docstring with all verified fields from actual API response<br>• Added `OrbitMissionId` column to `RoboticsRuns` table (mission template UUID)<br>• Updated `UpsertRun` Named Query to accept and store `mission_id`<br>• Updated `_upsert_run()` function signature to include `mission_id`<br>• Updated `handle_run_event()` to extract `missionId` from payload<br>• Clarified UDT status codes: internal codes (PEND, RUN, COMP, FAIL) vs Orbit API values (SUCCESS, FAILURE)<br>• Added warning: `RUN_START` notifications are NON-FUNCTIONAL until RUNNING status is captured<br>• **Why:** Enables future grouping/filtering of runs by mission type; documents known limitations |
+| **2.14** | 2026-02-04 | **Verified API Status Values - Direct Uppercase Matching**<br>• ✅ Verified actual `missionStatus` values from Bruno collection (runs.bru): `"SUCCESS"`, `"FAILURE"`<br>• Updated status mappings to use direct uppercase matching (no `.lower()` conversion)<br>• Removed all unverified assumed values (running, started, completed, etc.)<br>• Conservative approach: only map verified values, default to PEND with warning for unknown<br>• Updated `_process_run_event()` status_to_event map: `"SUCCESS"` → run.completed, `"FAILURE"` → run.failed<br>• Updated `handle_run_event()` status_map: `"SUCCESS"` → COMP, `"FAILURE"` → FAIL<br>• Added defensive logging for any unmapped status values<br>• **Why:** Prevents false assumptions; logs will capture actual values in production for future mapping<br>• **Reference:** orbit-api-documents-md/orbit-api/runs.bru (captured 2026-02-04) |
 | **2.13** | 2026-02-04 | **Use Actual Timestamps from Orbit API**<br>• Fixed `UpsertRun` Named Query to use actual `startTime` and `endTime` from Orbit API instead of `SYSUTCDATETIME()`<br>• Added `start_time` and `end_time` parameters to `UpsertRun` Named Query<br>• Updated `_process_run_event()` to pass `startTime` and `endTime` in the payload<br>• Updated `handle_run_event()` to extract timestamps and pass to `_upsert_run()`<br>• Updated `_upsert_run()` to accept and pass timestamps to Named Query<br>• `CompletedAtUtc` now records actual failure/completion time, not polling discovery time<br>• `DurationMinutes` calculation is now accurate (previously could be 60+ seconds off)<br>• Uses `COALESCE()` to fall back to server time if API timestamp is null<br>• **Why:** When a mission fails at 10:00:00 but polling detects it at 10:01:00, the DB should record 10:00:00 (actual failure time), not 10:01:00                                                                                                                   |
 | **2.12** | 2026-02-04 | **PyDataset Row Access Fix**<br>• Fixed `.get()` method usage in `evaluate_and_send()` function - replaced `rule.get("RuleName", default)` with bracket notation<br>• Fixed `.get()` method usage in `handle_run_event()` function - replaced nested `.get()` calls with bracket notation for consistency<br>• PyDataset row objects (Java objects) support bracket notation `[]` and `in` operator but do NOT have `.get()` method<br>• Updated pattern: use `row["ColName"] if "ColName" in row else default` instead of `row.get("ColName", default)`<br>• **Why:** Calling `.get()` on PyDataset row objects causes runtime errors; bracket notation is the correct approach for both PyDataset rows and dictionaries                                                                                                                                                                                                                                                                                                                 |
 | **2.11** | 2026-02-03 | **Enhanced Logging for Monitoring and Troubleshooting**<br>• Added comprehensive logging to all database query operations (UpsertRun, GetSiteConfig, GetRunNotificationContext, GetNotificationRules, GetNotificationRecipients, InsertNotificationHistory)<br>• Enhanced logging in `poll_recent_runs()`: API fetch start, run counts, status change detection<br>• Enhanced logging in `handle_run_event()`: event details, status mapping, warnings for unknown statuses<br>• Enhanced logging in `_update_mission_tags()`: tag write counts, success/error summaries<br>• Enhanced logging in `evaluate_and_send()`: rule evaluation, recipient matching, pattern validation<br>• Added new section 7.5: Logging Reference with logger hierarchy, recommended levels, sample messages, and troubleshooting guide<br>• Loggers now track: query parameters, row counts, status changes, API responses, notification matching, email sending<br>• **Why:** Makes it easy to monitor system status and troubleshoot issues in production |
@@ -483,6 +485,7 @@ CREATE TABLE RoboticsRuns (
     SiteId INT NOT NULL,
     RobotId INT NULL,
     OrbitRunUuid NVARCHAR(100) NOT NULL,
+    OrbitMissionId NVARCHAR(100) NULL,      -- Mission template UUID (for grouping runs by mission type)
     MissionName NVARCHAR(200) NULL,
     MissionStatusCode NVARCHAR(10) NULL,
     StartedAtUtc DATETIME2(3) NULL,
@@ -858,14 +861,21 @@ SpotRobot (UDT Definition)
     └── PollErrorCount      : Int      -- Consecutive poll error count
 ```
 
-**Mission Status Codes:**
+**Mission Status Codes (Internal to Plan):**
 
-| Code        | Description                   | Source                                  |
-| ----------- | ----------------------------- | --------------------------------------- |
-| `IDLE`      | No active mission             | Default state                           |
-| `RUNNING`   | Mission in progress           | Webhook `run.started` or `/runs` poll   |
-| `COMPLETED` | Mission finished successfully | Webhook `run.completed` or `/runs` poll |
-| `FAILED`    | Mission failed                | Webhook `run.failed` or `/runs` poll    |
+> **Note:** These are the plan's INTERNAL status codes stored in the database.
+> The Orbit API returns different values (e.g., `"SUCCESS"`, `"FAILURE"`) which are
+> mapped to these codes. See `status_map` in `handle_run_event()` for mapping logic.
+
+| Internal Code | Description                   | Orbit API Value | Verified? |
+| ------------- | ----------------------------- | --------------- | --------- |
+| `PEND`        | Pending/Unknown               | _(default)_     | N/A       |
+| `RUN`         | Mission in progress           | _(unknown)_     | ⚠️ Not yet captured |
+| `COMP`        | Mission finished successfully | `"SUCCESS"`     | ✅ Verified |
+| `FAIL`        | Mission failed                | `"FAILURE"`     | ✅ Verified |
+
+**⚠️ Important:** The `RUN` status mapping requires capturing the actual Orbit API value
+for running missions. Until then, new missions will default to `PEND`.
 
 **UDT Instance Example (Hostname-Based Naming):**
 
@@ -1031,6 +1041,8 @@ def get_runs(limit=100, robot_hostname=None, start_time=None):
     GET /api/v0/runs - Fetch mission runs from Orbit API.
 
     This is the PRIMARY source of mission activity data.
+    
+    Reference: orbit-api-documents-md/actual-responses.md (verified 2026-02-04)
 
     Args:
         limit: Maximum number of runs to fetch (default 100)
@@ -1038,17 +1050,21 @@ def get_runs(limit=100, robot_hostname=None, start_time=None):
         start_time: Optional ISO timestamp to filter runs after this time
 
     Returns:
-        list: List of run dictionaries with fields:
-            - uuid (str): Run unique identifier
-            - missionName (str): Mission name
-            - missionStatus (str): Status of the mission
+        list: List of run dictionaries with fields (verified from actual API):
+            - uuid (str): Run unique identifier (unique per execution)
+            - missionId (str): Mission template UUID (same for all runs of same mission)
+            - missionName (str): Mission display name
+            - missionStatus (str): Status - verified: "SUCCESS", "FAILURE" (uppercase)
             - startTime (str): ISO timestamp when run started
             - endTime (str): ISO timestamp when run ended (null if running)
+            - modifiedAt (str): ISO timestamp of last modification
             - robotHostname (str): Robot that executed the run
             - robotNickname (str): Robot display name
             - robotSerial (str): Robot serial number
             - runType (str): "mission" or "teleop"
             - actionCount (int): Number of actions in run
+            - pendingActionCount (int): Remaining actions (0 when completed)
+            - operatorId (str): Operator ID (null for autonomous missions)
     """
     logger = system.util.getLogger("orbit.api.runs")
     config = _get_config()
@@ -1276,23 +1292,15 @@ def _process_run_event(run):
     robot_hostname = run.get("robotHostname", "")
 
     # Map Orbit status to event type
-    # WARNING: Orbit API doesn't document all possible missionStatus values
-    # See: orbit-api-documents-md/api/actual-responses.md for discovered values
-    orbit_status = run.get("missionStatus", "").lower()
-    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
-    # OpenAPI spec doesn't document possible missionStatus values
-    # Common patterns suggest these, but VERIFY with real API responses
+    # ✅ VERIFIED from Bruno orbit-api/runs.bru (captured 2026-02-04)
+    # Only includes values observed in actual API responses
+    orbit_status = run.get("missionStatus", "")  # Keep uppercase as-is
+    
+    # Conservative approach: only map verified values
     status_to_event = {
-        "running": "run.started",       # ASSUMED - needs verification
-        "started": "run.started",       # ASSUMED - needs verification
-        "in_progress": "run.started",   # ASSUMED - needs verification
-        "completed": "run.completed",   # ASSUMED - may be "success" instead
-        "success": "run.completed",     # ASSUMED - common pattern but unverified
-        "succeeded": "run.completed",   # ASSUMED - possible synonym
-        "failed": "run.failed",         # ASSUMED - logical but unverified
-        "error": "run.failed",          # ASSUMED - needs verification
-        "aborted": "run.failed",        # ASSUMED - needs verification
-        "cancelled": "run.failed",      # ASSUMED - needs verification
+        "SUCCESS": "run.completed",     # ✅ Verified: observed 19 times in runs.bru
+        "FAILURE": "run.failed",        # ✅ Verified: observed 1 time in runs.bru
+        # All other values will trigger warning and default to run.started
     }
     event_type = status_to_event.get(orbit_status, "run.started")
 
@@ -1301,7 +1309,7 @@ def _process_run_event(run):
         orbit_status, event_type))
 
     if orbit_status not in status_to_event:
-        logger.warn("UNKNOWN missionStatus: '{}' for run {} - defaulting to run.started. CHECK ACTUAL API!".format(
+        logger.warn("UNKNOWN missionStatus: '{}' for run {} - defaulting to run.started. UPDATE STATUS MAP!".format(
             orbit_status, run_uuid[:8]))
 
     logger.debug("Processing run event: uuid={}, mission={}, status={}, event_type={}".format(
@@ -1310,10 +1318,12 @@ def _process_run_event(run):
     # Build payload in same format as webhook would send
     # This allows run_event_handlers to work with both polling and webhooks
     # v2.13: Include startTime and endTime for accurate DB timestamps
+    # v2.14: Include missionId for mission template tracking
     payload = {
         "type": event_type,
         "data": {
             "uuid": run_uuid,
+            "missionId": run.get("missionId"),   # Mission template UUID (same for all runs of same mission)
             "missionName": mission_name,
             "status": orbit_status,
             "startTime": run.get("startTime"),   # ISO timestamp from Orbit API
@@ -1399,29 +1409,9 @@ def _update_mission_tags(hostname, run_data):
         logger.error("Tag write failed for {}: {}".format(hostname, str(e)))
         return False
 
-def _map_mission_status(orbit_status):
-    """
-    Map Orbit mission status to our status codes.
-
-    Args:
-        orbit_status: Status string from Orbit API
-
-    Returns:
-        str: Standardized status code (IDLE, RUNNING, COMPLETED, FAILED)
-    """
-    if not orbit_status:
-        return "IDLE"
-
-    status_lower = orbit_status.lower()
-
-    if status_lower in ["running", "started", "in_progress"]:
-        return "RUNNING"
-    elif status_lower in ["completed", "success", "succeeded"]:
-        return "COMPLETED"
-    elif status_lower in ["failed", "error", "aborted", "cancelled"]:
-        return "FAILED"
-    else:
-        return "IDLE"
+# NOTE: Status mapping is done in handle_run_event() and _process_run_event()
+# using direct uppercase matching (v2.14). See those functions for the verified
+# status values: "SUCCESS" -> COMP, "FAILURE" -> FAIL
 
 def _parse_iso_timestamp(iso_string):
     """
@@ -1749,8 +1739,9 @@ def handle_run_event(payload):
 
     run_data = payload["data"] if "data" in payload else {}
     run_uuid = run_data["uuid"] if "uuid" in run_data else ""
+    mission_id = run_data["missionId"] if "missionId" in run_data else None  # Mission template UUID
     mission_name = run_data["missionName"] if "missionName" in run_data else ""
-    status = run_data["status"] if "status" in run_data else ""  # started, completed, failed
+    status = run_data["status"] if "status" in run_data else ""  # Orbit API: SUCCESS, FAILURE (uppercase)
     robot_data = run_data["robot"] if "robot" in run_data else {}
     robot_hostname = robot_data["hostname"] if "hostname" in robot_data else ""
 
@@ -1762,19 +1753,12 @@ def handle_run_event(payload):
         run_uuid, mission_name, status, robot_hostname))
 
     # Map Orbit status to our codes
-    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
-    # OpenAPI spec doesn't document possible missionStatus values
-    # See: orbit-api-documents-md/api/actual-responses.md to document real values
+    # ✅ VERIFIED from Bruno orbit-api/runs.bru (captured 2026-02-04)
+    # Only includes values observed in actual API responses
     status_map = {
-        "started": "RUN",       # ASSUMED - verify with real API
-        "completed": "COMP",    # ASSUMED - might be wrong, could be "success"
-        "success": "COMP",      # ASSUMED - common pattern but unverified
-        "failed": "FAIL",       # ASSUMED - verify with real API
-        "pending": "PEND",      # ASSUMED - verify with real API
-        "running": "RUN",       # ASSUMED - verify with real API
-        "error": "FAIL",        # ASSUMED - verify with real API
-        "aborted": "FAIL",      # ASSUMED - verify with real API
-        "cancelled": "FAIL"     # ASSUMED - verify with real API
+        "SUCCESS": "COMP",      # ✅ Verified: observed 19 times in runs.bru
+        "FAILURE": "FAIL",      # ✅ Verified: observed 1 time in runs.bru
+        # All other values will trigger warning and default to PEND
     }
     mission_status_code = status_map.get(status, "PEND")
 
@@ -1783,46 +1767,47 @@ def handle_run_event(payload):
         status, mission_status_code))
 
     if status not in status_map:
-        logger.warn("UNKNOWN status '{}' for run {} - defaulting to PEND. VERIFY ACTUAL API!".format(
+        logger.warn("UNKNOWN status '{}' for run {} - defaulting to PEND. UPDATE STATUS MAP!".format(
             status, run_uuid))
 
     # 1. Upsert to database using Named Query (with actual timestamps)
-    _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname, start_time, end_time)
+    _upsert_run(run_uuid, mission_id, mission_name, mission_status_code, robot_hostname, start_time, end_time)
 
     # 2. Update mission tags
     _update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
 
     # 3. Evaluate notification rules
-    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
+    # ✅ VERIFIED from Bruno orbit-api/runs.bru (captured 2026-02-04)
+    # ⚠️ WARNING: RUN_START notifications are NON-FUNCTIONAL until we capture
+    #            the actual missionStatus value for running missions.
+    #            Once captured, add: "<RUNNING_VALUE>": "RUN_START" below.
     trigger_type_map = {
-        "started": "RUN_START",     # ASSUMED - verify with real API
-        "running": "RUN_START",     # ASSUMED - verify with real API
-        "completed": "RUN_COMP",    # ASSUMED - might be wrong
-        "success": "RUN_COMP",      # ASSUMED - common but unverified
-        "failed": "RUN_FAIL",       # ASSUMED - verify with real API
-        "error": "RUN_FAIL",        # ASSUMED - verify with real API
-        "aborted": "RUN_FAIL",      # ASSUMED - verify with real API
-        "cancelled": "RUN_FAIL"     # ASSUMED - verify with real API
+        "SUCCESS": "RUN_COMP",      # ✅ Verified: observed in runs.bru
+        "FAILURE": "RUN_FAIL",      # ✅ Verified: observed in runs.bru
+        # TODO: Add running status when captured, e.g.:
+        # "RUNNING": "RUN_START",   # ⚠️ NOT YET VERIFIED - capture actual value first
     }
     trigger_type = trigger_type_map.get(status, None)
     if trigger_type is None:
-        logger.warn("UNKNOWN status for trigger mapping: '{}' - skipping notification. Update trigger_type_map!".format(status))
+        logger.warn("UNKNOWN status for trigger mapping: '{}' - skipping notification. UPDATE TRIGGER MAP!".format(status))
         return
     notification_engine.evaluate_and_send(trigger_type, run_uuid, mission_name, mission_status_code, robot_hostname)
 
     logger.info("Processed run event: {} - {}".format(mission_name, mission_status_code))
 
 
-def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=None, end_time=None):
+def _upsert_run(run_uuid, mission_id, mission_name, status_code, robot_hostname, start_time=None, end_time=None):
     """
     Insert or update run in database using Named Query.
     Uses atomic MERGE operation for thread safety.
 
     v2.13: Now accepts start_time and end_time from Orbit API for accurate timestamps.
            Falls back to server time (SYSUTCDATETIME) if API timestamps are null.
+    v2.15: Added mission_id (template UUID) for grouping runs by mission type.
 
     Args:
-        run_uuid: Orbit run UUID
+        run_uuid: Orbit run UUID (unique per run instance)
+        mission_id: Orbit mission template UUID (same for all runs of same mission type)
         mission_name: Mission name
         status_code: Status code (RUN, COMP, FAIL, PEND)
         robot_hostname: Robot hostname for FK lookup
@@ -1832,15 +1817,17 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=
     logger = system.util.getLogger("orbit.run_event.db")
 
     try:
-        logger.debug("Upserting run: uuid={}, mission={}, status={}, robot={}, start={}, end={}".format(
-            run_uuid, mission_name, status_code, robot_hostname, start_time, end_time))
+        logger.debug("Upserting run: uuid={}, mission_id={}, mission={}, status={}, robot={}, start={}, end={}".format(
+            run_uuid, mission_id, mission_name, status_code, robot_hostname, start_time, end_time))
 
         # Use Named Query for secure, maintainable database access
         # v2.13: Pass actual timestamps from Orbit API
+        # v2.15: Pass mission_id for grouping runs by mission type
         rows_affected = system.db.runNamedQuery(
             "UpsertRun",
             {
                 "run_uuid": run_uuid,
+                "mission_id": mission_id,       # Mission template UUID (may be None)
                 "mission_name": mission_name,
                 "status_code": status_code,
                 "robot_hostname": robot_hostname,
@@ -2423,14 +2410,16 @@ print "=" * 60
 print "TEST 1: Mission Started Event"
 print "=" * 60
 
+# ⚠️ NOTE: The actual missionStatus for running missions is NOT YET CAPTURED.
+#          This test uses a placeholder. Once you capture the real value, update below.
 test_payload_started = {
     "type": "run.started",
     "data": {
         "uuid": "test-run-001",
         "missionName": "Daily Inspection",
-        "status": "started",
-        "startTime": "2026-02-04T10:30:00.000Z",  # v2.13: Actual start time from Orbit API
-        "endTime": None,                          # v2.13: Null because still running
+        "status": "RUNNING",   # ⚠️ PLACEHOLDER - capture actual value from Orbit API
+        "startTime": "2026-02-04T10:30:00.000Z",
+        "endTime": None,
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -2442,7 +2431,7 @@ except Exception as e:
     print "ERROR: {}".format(str(e))
 
 # Test Case 2: Mission Completed Event
-# ⚠️ NOTE: Actual status value is UNKNOWN - testing "success" (unverified assumption)
+# ✅ VERIFIED: Orbit API returns "SUCCESS" (uppercase) for completed missions
 print "\n" + "=" * 60
 print "TEST 2: Mission Completed Event"
 print "=" * 60
@@ -2452,9 +2441,9 @@ test_payload_completed = {
     "data": {
         "uuid": "test-run-001",  # Same UUID to test update
         "missionName": "Daily Inspection",
-        "status": "success",  # ASSUMPTION - could also be "completed" - VERIFY WITH REAL API
-        "startTime": "2026-02-04T10:30:00.000Z",  # v2.13: Actual start time from Orbit API
-        "endTime": "2026-02-04T10:45:30.000Z",    # v2.13: Actual end time (15.5 min duration)
+        "status": "SUCCESS",  # ✅ Verified from runs.bru (2026-02-04)
+        "startTime": "2026-02-04T10:30:00.000Z",
+        "endTime": "2026-02-04T10:45:30.000Z",
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -2466,6 +2455,7 @@ except Exception as e:
     print "ERROR: {}".format(str(e))
 
 # Test Case 3: Mission Failed Event
+# ✅ VERIFIED: Orbit API returns "FAILURE" (uppercase) for failed missions
 print "\n" + "=" * 60
 print "TEST 3: Mission Failed Event"
 print "=" * 60
@@ -2475,9 +2465,9 @@ test_payload_failed = {
     "data": {
         "uuid": "test-run-002",
         "missionName": "Emergency Response",
-        "status": "failed",
-        "startTime": "2026-02-04T11:00:00.000Z",  # v2.13: Actual start time from Orbit API
-        "endTime": "2026-02-04T11:05:15.000Z",    # v2.13: Actual failure time (5.25 min into mission)
+        "status": "FAILURE",  # ✅ Verified from runs.bru (2026-02-04)
+        "startTime": "2026-02-04T11:00:00.000Z",
+        "endTime": "2026-02-04T11:05:15.000Z",
         "robot": {"hostname": "spot-demo-01"},
     },
 }
@@ -2969,7 +2959,7 @@ def get_all_robots(site_id=1):
 | `GetNotificationRules`      | Query  | Get active notification rules (returns ALL matching, ordered by priority) | `:trigger_type_code`, `:status_code`                                        |
 | `GetNotificationRecipients` | Query  | Get recipients for a rule                                                 | `:rule_id` (Int)                                                            |
 | `GetRunNotificationContext` | Query  | Data used for notification templates                                      | `:run_uuid` (String)                                                        |
-| `UpsertRun`                 | Update | Insert or update run record                                               | `:run_uuid`, `:mission_name`, `:status_code`, `:robot_hostname`             |
+| `UpsertRun`                 | Update | Insert or update run record                                               | `:run_uuid`, `:mission_id`, `:mission_name`, `:status_code`, `:robot_hostname`, `:start_time`, `:end_time` |
 | `GetRobotByHostname`        | Query  | Find robot by hostname                                                    | `:hostname`                                                                 |
 | `GetRobotTagPath`           | Query  | Get robot's tag base path (for production/multi-site)                     | `:hostname`                                                                 |
 | `GetSiteConfig`             | Query  | Get site configuration (SMTP, Orbit URL, etc.)                            | `:site_id` (Int)                                                            |
@@ -3293,7 +3283,8 @@ OFFSET 0 ROWS FETCH NEXT COALESCE(:limit, 100) ROWS ONLY
 **Parameters:**
 | Name | Type | Required | Notes |
 |------|------|----------|-------|
-| run_uuid | String | Yes | Orbit run UUID |
+| run_uuid | String | Yes | Orbit run UUID (unique per run instance) |
+| mission_id | String | No | Orbit mission template UUID (same for all runs of same mission type) |
 | mission_name | String | No | Pass `None` if unknown |
 | status_code | String | Yes | e.g., `RUN`, `COMP`, `FAIL` |
 | robot_hostname | String | Yes | Robot hostname for FK lookup |
@@ -3308,6 +3299,7 @@ MERGE INTO RoboticsRuns AS target
 USING (
     SELECT
         :run_uuid AS OrbitRunUuid,
+        :mission_id AS OrbitMissionId,
         :mission_name AS MissionName,
         :status_code AS MissionStatusCode,
         -- Convert ISO string to DATETIME2; COALESCE falls back to server time if null
@@ -3329,11 +3321,12 @@ WHEN MATCHED THEN
             ELSE target.CompletedAtUtc
         END
 WHEN NOT MATCHED THEN
-    INSERT (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc)
+    INSERT (SiteId, RobotId, OrbitRunUuid, OrbitMissionId, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc)
     VALUES (
         source.SiteId,
         source.RobotId,
         source.OrbitRunUuid,
+        source.OrbitMissionId,
         source.MissionName,
         source.MissionStatusCode,
         -- Use actual start time from Orbit API; fall back to server time only if API timestamp is null
@@ -3593,8 +3586,8 @@ Only logs warnings and errors. Use for production environments where INFO logs w
 orbit.runs_polling | Fetched 25 run(s) from Orbit API
 orbit.runs_polling | Poll complete: processed 2 run status change(s) out of 25 runs
 orbit.runs_polling.change_detection | New run detected: 12345678 - Patrol A (status: running)
-orbit.runs_polling.change_detection | Status change detected for 87654321: running -> success
-orbit.run_event | Processing run event: uuid=12345678, mission=Patrol A, status=success, robot=spot-BD-12345678
+orbit.runs_polling.change_detection | Status change detected for 87654321: RUNNING -> SUCCESS
+orbit.run_event | Processing run event: uuid=12345678, mission=Patrol A, status=SUCCESS, robot=spot-BD-12345678
 orbit.run_event.db | Upserted run 12345678 successfully: 1 rows affected
 orbit.run_event.tags | Successfully updated 4 tag(s) for robot spot-BD-12345678
 orbit.notification | Evaluating notifications: trigger=RUN_COMP, run=12345678, mission=Patrol A, status=COMP
@@ -3606,7 +3599,7 @@ orbit.notification.send | Sent notification: [SUCCESS] Mission Patrol A Complete
 
 ```
 orbit.runs_polling | Starting runs poll from Orbit API (limit=50)
-orbit.runs_polling.process | Processing run event: uuid=12345678, mission=Patrol A, status=success, event_type=run.completed
+orbit.runs_polling.process | Processing run event: uuid=12345678, mission=Patrol A, status=SUCCESS, event_type=run.completed
 orbit.run_event.db | Upserting run: uuid=12345678, mission=Patrol A, status=COMP, robot=spot-BD-12345678
 orbit.run_event.tags | Updating mission tags for robot=spot-BD-12345678, run=12345678, status=COMP
 orbit.run_event.tags | Writing 4 tag(s) to tag base: [default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678
@@ -3806,10 +3799,10 @@ To configure log levels:
 - [ ] Test in Script Console:
 
   ```python
-  # Test event handler directly
+  # Test event handler directly (uses verified uppercase status values)
   run_event_handlers.handle_run_event({
       "type": "run.completed",
-      "data": {"uuid": "test-123", "missionName": "Test", "status": "completed", "robot": {"hostname": "spot-demo-01"}}
+      "data": {"uuid": "test-123", "missionName": "Test", "status": "SUCCESS", "robot": {"hostname": "spot-demo-01"}}
   })
 
   # Test full polling flow
@@ -4257,9 +4250,11 @@ def doPost(request, session):
 
 ```bash
 # Test on Windows CMD (single line):
-curl -X POST http://localhost:8088/system/webdev/SpotDemo/orbit/webhook -H "Content-Type: application/json" -d "{\"type\": \"run.completed\", \"data\": {\"uuid\": \"test-001\", \"missionName\": \"Test\", \"status\": \"completed\", \"robot\": {\"hostname\": \"spot-demo-01\"}}}"
+# ✅ Uses verified uppercase status value
+curl -X POST http://localhost:8088/system/webdev/SpotDemo/orbit/webhook -H "Content-Type: application/json" -d "{\"type\": \"run.completed\", \"data\": {\"uuid\": \"test-001\", \"missionName\": \"Test\", \"status\": \"SUCCESS\", \"robot\": {\"hostname\": \"spot-demo-01\"}}}"
 
 # Test on Linux/Mac:
+# ✅ Uses verified uppercase status value
 curl -X POST \
   http://localhost:8088/system/webdev/SpotDemo/orbit/webhook \
   -H "Content-Type: application/json" \
@@ -4268,7 +4263,7 @@ curl -X POST \
     "data": {
       "uuid": "test-001",
       "missionName": "Test Mission",
-      "status": "completed",
+      "status": "SUCCESS",
       "robot": {"hostname": "spot-demo-01"}
     }
   }'
@@ -4302,5 +4297,5 @@ This ensures data integrity even if webhooks are missed due to network issues.
 ---
 
 _Document maintained by: AME-Junsu Lee_  
-_Version: 2.13 (Demo MVP) - Use Actual Timestamps from Orbit API_  
+_Version: 2.15 (Demo MVP) - API Response Alignment + MissionId Support 
 _Based on: ignition-spot-long-plan.md (Enterprise Version)_
