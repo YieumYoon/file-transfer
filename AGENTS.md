@@ -1,13 +1,130 @@
 # Agent Behavior Guidelines
 
 ## Project Context
+
 This repository contains Ignition SCADA integration plans for Boston Dynamics Spot robots via the Orbit API. The primary document is `ignition-spot-simple-plan.md`.
 
 ---
 
-
-
 ## Critical Rules for Architecture Planning
+
+### 0. **NEVER Assume Unknown Information - Request Real Data First**
+
+**CRITICAL:** When working with external APIs, databases, or any system you haven't tested:
+
+- ❌ **DON'T:** Assume API response values based on "common patterns"
+- ❌ **DON'T:** Invent field values, status codes, or response formats
+- ❌ **DON'T:** Present assumptions as verified facts
+- ❌ **DON'T:** Write code based on unverified assumptions
+- ✅ **DO:** Explicitly request real API responses from the user
+- ✅ **DO:** Mark ALL assumptions with "⚠️ ASSUMPTION - NOT VERIFIED"
+- ✅ **DO:** Ask user to verify foundations before proceeding with implementation
+- ✅ **DO:** Provide validation workflow (like API-RESPONSE-VALIDATION-GUIDE.md)
+
+**Why This Matters:**
+
+- Wrong API assumptions → Missed critical events (e.g., mission failures)
+- Wrong status values → Notifications don't fire
+- Wrong response formats → Code crashes in production
+- User discovers errors only after deployment
+
+**Example - BAD (What Happened in v2.9):**
+
+```python
+# Claimed "Verified" but was actually AI assumption:
+status_map = {
+    "success": "COMP",  # ✅ Verified - Orbit uses "success"
+}
+# Reality: NEVER tested with real Orbit API
+```
+
+**Example - GOOD (Honest Approach):**
+
+```python
+# ⚠️ ASSUMPTION - Common API pattern, NOT verified with real Orbit API
+# Before deployment: Capture actual responses using:
+#   curl -H "Authorization: Bearer TOKEN" .../api/v0/runs | jq .
+status_map = {
+    "success": "COMP",    # ASSUMED - verify first
+    "completed": "COMP",  # ASSUMED - verify first
+}
+```
+
+**Required Workflow Before Implementation:**
+
+1. **Check for existing real data:**
+   - Check `orbit-api-documents-md/actual-responses.md` for verified values
+   - Check `orbit-api-documents-md/api-responses-json/` for JSON files
+   - If none exist → **STOP and request from user**
+
+2. **Request user to capture real API responses:**
+
+   ```
+   Before I implement this, I need to verify the actual API responses.
+
+   Can you run these commands and share the output?
+
+   curl -H "Authorization: Bearer YOUR_TOKEN" \
+     "https://your-server/api/v0/runs?limit=100" \
+     | jq . > orbit-api-documents-md/api-responses-json/runs.json
+
+   Then I can use the REAL field values from the JSON file.
+   ```
+
+3. **Mark assumptions clearly:**
+   - Use `⚠️ ASSUMPTION` in code comments
+   - Use `🔴 UNVERIFIED` in documentation
+   - Never use "✅ Verified" unless documented in actual-responses.md
+
+4. **Get user approval before proceeding:**
+
+   ```
+   I've marked these values as ASSUMPTIONS. We have two options:
+
+   A) You capture real API responses now (30 min) → I use verified values
+   B) I proceed with assumptions → You MUST verify before production
+
+   Which approach do you prefer?
+   ```
+
+**Red Flags to Avoid:**
+
+- "Based on common API patterns..." without verification
+- "Typically APIs return..." without checking THIS API
+- Version history claiming "Fixed" or "Verified" when no testing occurred
+- Status value lists without source data
+- Claiming verification in code comments when it's fictional
+
+**When Documentation is Incomplete:**
+
+If official API docs don't specify possible values (e.g., `missionStatus` field exists but values not listed):
+
+```
+⚠️ The API documentation shows the `missionStatus` field exists (type: string)
+but does NOT list the possible values.
+
+Before I can implement status handling correctly, we need actual responses.
+
+Please run:
+  curl -H "Authorization: Bearer YOUR_TOKEN" \
+    "https://your-server/api/v0/runs?limit=100" \
+    | jq . > orbit-api-documents-md/api-responses-json/runs.json
+
+Then extract status values:
+  jq -r '.resources[].missionStatus' orbit-api-documents-md/api-responses-json/runs.json | sort | uniq -c
+
+This will show ALL status values currently in your system.
+```
+
+**Prevention Checklist:**
+
+- [ ] Have I checked `orbit-api-documents-md/actual-responses.md` for verified data?
+- [ ] Have I explicitly marked assumptions as unverified?
+- [ ] Have I asked user to verify before implementation?
+- [ ] Have I provided exact commands to capture real data?
+- [ ] Have I avoided claiming "verified" without proof?
+
+---
 
 ### 1. **ALWAYS Disclose License Costs Upfront**
 
@@ -20,12 +137,14 @@ When proposing any solution involving Ignition modules or third-party components
 - ❌ **DON'T:** Build plans around optional modules without explicit user approval
 
 **Example - Bad:**
+
 ```
 We'll use the Web Dev module to receive webhooks...
 (User discovers later it requires separate purchase)
 ```
 
 **Example - Good:**
+
 ```
 Option A (No extra cost): Polling every 60s using Gateway Timer
 Option B (Requires Web Dev license): Real-time webhooks
@@ -37,16 +156,17 @@ Which approach do you prefer?
 For ANY architectural decision with trade-offs, present options with pros/cons:
 
 ```markdown
-| Requirement | Option A | Option B |
-|-------------|----------|----------|
-| Cost | Free | $X extra |
-| Latency | 60 seconds | < 5 seconds |
-| Complexity | Low | Medium |
+| Requirement | Option A   | Option B    |
+| ----------- | ---------- | ----------- |
+| Cost        | Free       | $X extra    |
+| Latency     | 60 seconds | < 5 seconds |
+| Complexity  | Low        | Medium      |
 ```
 
 ### 3. **Avoid Mid-Project Architecture Changes**
 
 Changing architecture after code is written is painful:
+
 - Multiple modules need updates
 - Testing needs revalidation
 - Documentation becomes inconsistent
@@ -62,23 +182,23 @@ Changing architecture after code is written is painful:
 
 Always check and inform the user about these modules:
 
-| Module | Purpose | Free? |
-|--------|---------|-------|
-| Perspective | Modern HMI | ✅ Included (most editions) |
-| Vision | Legacy HMI | ✅ Included (some editions) |
-| **Web Dev** | HTTP endpoints, REST APIs | ❌ **Separate purchase** |
-| Tag Historian | Time-series data storage | ❌ Separate purchase |
-| Alarm Notification | Advanced alarming | ✅ Included |
-| Enterprise Administration Module (EAM) | Multi-gateway management | ❌ Separate purchase |
+| Module                                 | Purpose                   | Free?                       |
+| -------------------------------------- | ------------------------- | --------------------------- |
+| Perspective                            | Modern HMI                | ✅ Included (most editions) |
+| Vision                                 | Legacy HMI                | ✅ Included (some editions) |
+| **Web Dev**                            | HTTP endpoints, REST APIs | ❌ **Separate purchase**    |
+| Tag Historian                          | Time-series data storage  | ❌ Separate purchase        |
+| Alarm Notification                     | Advanced alarming         | ✅ Included                 |
+| Enterprise Administration Module (EAM) | Multi-gateway management  | ❌ Separate purchase        |
 
 ### Common Cost-Free Alternatives
 
-| Need | Paid Option | Free Alternative |
-|------|-------------|------------------|
-| Receive webhooks | Web Dev module | Gateway Timer polling |
-| Historical data | Tag Historian | Database + Named Queries |
-| Custom REST API | Web Dev module | Not available (polling only) |
-| Email notifications | (Built-in) | ✅ system.net.sendEmail() |
+| Need                | Paid Option    | Free Alternative             |
+| ------------------- | -------------- | ---------------------------- |
+| Receive webhooks    | Web Dev module | Gateway Timer polling        |
+| Historical data     | Tag Historian  | Database + Named Queries     |
+| Custom REST API     | Web Dev module | Not available (polling only) |
+| Email notifications | (Built-in)     | ✅ system.net.sendEmail()    |
 
 ### PyDataset Handling with Named Queries
 
@@ -87,6 +207,7 @@ Always check and inform the user about these modules:
 #### Common Mistakes
 
 ❌ **WRONG:**
+
 ```python
 result = system.db.runNamedQuery("GetSiteConfig", {"site_id": 1})
 if result and len(result) > 0:
@@ -94,6 +215,7 @@ if result and len(result) > 0:
 ```
 
 ✅ **CORRECT:**
+
 ```python
 result = system.db.runNamedQuery("GetSiteConfig", {"site_id": 1})
 if result and result.getRowCount() > 0:
@@ -107,19 +229,20 @@ if result and result.getRowCount() > 0:
 
 #### PyDataset API Reference
 
-| Operation | ❌ Don't Use | ✅ Use Instead |
-|-----------|--------------|----------------|
-| Row count | `len(dataset)` | `dataset.getRowCount()` |
-| Column count | N/A | `dataset.getColumnCount()` |
-| Column names | N/A | `dataset.getColumnName(index)` |
-| Get value | `dataset[row][col]` | `dataset.getValueAt(row, col)` or `dataset.getValueAt(row, "ColName")` |
-| Get value (with default) | `row.get("ColName", default)` | `row["ColName"] if "ColName" in row else default` |
-| Iterate rows | `for row in dataset:` | Works, but `row` is not a dict! |
-| Convert to dict | `dict(row)` | Manual loop with `getValueAt()` |
+| Operation                | ❌ Don't Use                  | ✅ Use Instead                                                         |
+| ------------------------ | ----------------------------- | ---------------------------------------------------------------------- |
+| Row count                | `len(dataset)`                | `dataset.getRowCount()`                                                |
+| Column count             | N/A                           | `dataset.getColumnCount()`                                             |
+| Column names             | N/A                           | `dataset.getColumnName(index)`                                         |
+| Get value                | `dataset[row][col]`           | `dataset.getValueAt(row, col)` or `dataset.getValueAt(row, "ColName")` |
+| Get value (with default) | `row.get("ColName", default)` | `row["ColName"] if "ColName" in row else default`                      |
+| Iterate rows             | `for row in dataset:`         | Works, but `row` is not a dict!                                        |
+| Convert to dict          | `dict(row)`                   | Manual loop with `getValueAt()`                                        |
 
 #### Correct Patterns for Common Operations
 
 **Pattern 1: Single Row to Dictionary**
+
 ```python
 result = system.db.runNamedQuery("GetRobotByHostname", {"hostname": "spot-01"})
 if result and result.getRowCount() > 0:
@@ -131,6 +254,7 @@ return None
 ```
 
 **Pattern 2: Multiple Rows to List of Dictionaries**
+
 ```python
 result = system.db.runNamedQuery("GetAllRobots", {"site_id": 1})
 robots = []
@@ -144,30 +268,33 @@ return robots
 ```
 
 **Pattern 3: Iterate with PyDataset Row Objects**
+
 ```python
 result = system.db.runNamedQuery("GetNotificationRules", params)
 for rule in result:  # rule is a PyDataset row object
     # Access by column name (recommended)
     rule_id = rule["NotificationRuleId"]
     pattern = rule["MissionNamePattern"]
-    
+
     # Note: rule is NOT a dict, but supports [] access
 ```
 
 **Pattern 4: Access Optional Fields with Default Values**
+
 ```python
 result = system.db.runNamedQuery("GetNotificationRules", params)
 for rule in result:
     rule_id = rule["NotificationRuleId"]
-    
+
     # ❌ WRONG - .get() method doesn't exist
     rule_name = rule.get("RuleName", "Rule #{}".format(rule_id))
-    
+
     # ✅ CORRECT - use bracket notation with conditional
     rule_name = rule["RuleName"] if "RuleName" in rule else "Rule #{}".format(rule_id)
 ```
 
 **Pattern 5: Check for Results**
+
 ```python
 result = system.db.runNamedQuery("GetRecipients", {"rule_id": 5})
 
@@ -204,6 +331,7 @@ print "First row:", result.getValueAt(0, 0), result.getValueAt(0, 1)
 #### Historical Context
 
 This mistake appeared in `ignition-spot-simple-plan.md` multiple times:
+
 - **v2.7:** `get_site_config()` used `dict(result[0])` - failed to convert (fixed in v2.11)
 - **v2.7:** `evaluate_and_send()` used `getValueAt(0, 1)` instead of `getValueAt(0, i)` - copied wrong column (fixed in v2.11)
 - **v2.11:** Test verification functions used `len(ds)` instead of `ds.getRowCount()` (fixed in v2.11)
@@ -211,7 +339,8 @@ This mistake appeared in `ignition-spot-simple-plan.md` multiple times:
 
 **Root Cause:** PyDataset rows are Java objects that implement a subset of Python dict-like behavior (bracket notation `[]`, `in` operator) but do NOT support Python dict methods (`.get()`, `.keys()`, `.values()`, etc.)
 
-**Prevention:** 
+**Prevention:**
+
 - Always use PyDataset methods (`getRowCount()`, `getValueAt()`, etc.) when working with Named Query results
 - Use bracket notation `row["ColName"]` instead of `row.get("ColName", default)`
 - For optional fields, use: `row["ColName"] if "ColName" in row else default`
@@ -230,8 +359,8 @@ When updating architecture documents:
 ### Version History Format
 
 ```markdown
-| Version | Date | Changes |
-|---------|------|---------|
+| Version | Date       | Changes                                                                                              |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------- |
 | **X.X** | YYYY-MM-DD | **Brief Title**<br>• Bullet point changes<br>• Why the change was made<br>• Impact on implementation |
 ```
 
@@ -258,18 +387,21 @@ When updating architecture documents:
 ## Project-Specific Context
 
 ### Technology Stack
+
 - **Platform:** Ignition 8.1+
 - **Language:** Python 2.7 (Jython) in Ignition
 - **Database:** Microsoft SQL Server
 - **External API:** Boston Dynamics Orbit REST API
 
 ### Key Design Decisions (v2.8)
+
 - **Data Collection:** Polling-based (every 60s) - no Web Dev module
 - **Module Name:** `run_event_handlers` (handles DB/tags/notifications)
 - **Logger Prefix:** `orbit.*` for all log messages
 - **Architecture:** Gateway Timer → Polling → Change Detection → Event Handler
 
 ### If User Wants Real-Time (< 5 sec latency)
+
 - See Appendix A in `ignition-spot-simple-plan.md`
 - Requires Web Dev module license
 - Only recommend if user explicitly needs sub-5-second updates
@@ -278,88 +410,68 @@ When updating architecture documents:
 
 ## Orbit API Documentation Reference
 
-### Automatic Documentation Search
+When working on Orbit API integration tasks, **ALWAYS search the local API documentation first**:
 
-When working on Orbit API integration tasks, **ALWAYS search the local API documentation first** before making assumptions or asking the user:
+**Documentation Location:** `orbit-api-documents-md/`
 
-**Documentation Location:** `orbit-api-documents-md/api/`
+**Priority Order:**
+
+1. **Check `actual-responses.md` FIRST** - Contains verified real API responses
+2. **Check `api-responses-json/*.json`** - Contains raw JSON response files
+3. **Check endpoint docs** - `runs.md`, `robots.md`, etc. for API structure
+4. **Check `schemas.md`** - For data model definitions
 
 **When to Search:**
+
 - ✅ User asks about any Orbit API endpoint, parameter, or response
-- ✅ Implementing new API integration features
+- ✅ Need to verify API capabilities or response formats
+- ✅ Planning implementations or data structures
 - ✅ Debugging API-related issues
-- ✅ Uncertain about API capabilities or limitations
-- ✅ Need to verify authentication requirements
-- ✅ Planning webhook implementations or data structures
 
-**How to Search:**
+**Available Documentation:**
 
-1. **Use Grep** for specific terms:
-   ```
-   Pattern: "endpoint_name" or "field_name" or "authentication"
-   Path: orbit-api-documents-md/api/
-   ```
-
-2. **Use Glob** to find relevant files:
-   ```
-   Pattern: "*.md" in orbit-api-documents-md/api/
-   ```
-
-3. **Read the relevant documentation** before responding to user
-
-**Available Documentation Files:**
-- `authentication.md` - API authentication methods
-- `webhooks.md` - Webhook configuration and events
-- `runs.md` - Run data and operations
-- `run-events.md` - Run event types and structure
-- `run-captures.md` - Media capture data
-- `missions.md` - Mission management
-- `robots.md` - Robot information and status
-- `anomalies.md` - Anomaly detection data
-- `backup-tasks.md` - Backup task management
-- And more... (see `orbit-api-documents-md/api/` directory)
-
-**Example Workflow:**
-
-```
-User: "How do I get the run events from Orbit API?"
-
-Agent Actions:
-1. Grep for "run-events" or "events" in orbit-api-documents-md/api/
-2. Read orbit-api-documents-md/api/run-events.md
-3. Provide accurate answer based on documentation
-4. Reference the documentation file in response
-```
+- `actual-responses.md` - **Verified API responses (check first!)**
+- `api-responses-json/` - Raw JSON response files
+- `README.md` - API overview and AI agent guidelines
+- `authentication.md`, `runs.md`, `robots.md`, `webhooks.md`, etc.
+- `schemas.md` - Data model definitions
 
 **Benefits:**
-- ✅ Provides accurate, up-to-date API information
-- ✅ Reduces back-and-forth with user
+
+- ✅ Accurate, up-to-date API information
+- ✅ Prevents false assumptions
 - ✅ Ensures correct endpoint usage
-- ✅ Prevents API integration errors
-- ❌ **DON'T:** Make assumptions about API structure
-- ❌ **DON'T:** Ask user for API details that exist in documentation
 
 ---
 
 ## Lessons Learned from This Project
 
 ### What Went Wrong
+
 1. Proposed Web Dev module without mentioning license requirement
 2. Built entire architecture around webhooks before discussing costs
-3. Had to refactor mid-project (v2.7 → v2.8)
-4. Caused user frustration and extra work
+3. **Assumed API response values without verification** (v2.9 false "verified" claims)
+4. Had to refactor mid-project (v2.7 → v2.8)
 
 ### What Should Have Happened
-1. Initial proposal should have been:
+
+1. **Check actual-responses.md first** - Would have discovered no verified values
+2. **Request real API data** - 30 minutes to capture responses
+3. **Present cost options upfront:**
    ```
    Data Collection Options:
-   A) Polling (free, 60s delay) 
+   A) Polling (free, 60s delay)
    B) Webhooks (requires Web Dev license purchase, real-time)
    Which do you prefer?
    ```
-2. User makes informed choice upfront
-3. Build architecture based on chosen option
-4. No mid-project refactoring needed
+4. Build architecture based on verified data and chosen option
+
+### Key Takeaways
+
+- ✅ **Verify before implementing** - Save hours of rework
+- ✅ **Disclose costs upfront** - Let user decide
+- ✅ **Mark assumptions clearly** - Never claim "verified" without proof
+- ✅ **30 minutes of verification** > days of fixing wrong assumptions
 
 ---
 
@@ -376,7 +488,15 @@ Before proposing any Ignition architecture:
 
 ---
 
-*Created: 2026-02-03*  
-*Last Updated: 2026-02-03*  
-*Context: After v2.7 → v2.8 architecture refactor (webhook → polling) + PyDataset conversion fixes (v2.11)*  
-*Purpose: Prevent similar issues in future agent interactions*
+_Created: 2026-02-03_  
+_Last Updated: 2026-02-04_  
+_Context: After v2.7 → v2.8 architecture refactor (webhook → polling) + PyDataset conversion fixes (v2.11) + API verification lessons (v2.12) + Documentation consolidation (v2.13)_  
+_Purpose: Prevent similar issues in future agent interactions_
+
+**v2.13 Updates (2026-02-04):**
+
+- ✅ Consolidated validation docs → single `actual-responses.md` file
+- ✅ Organized JSON responses in `orbit-api-documents-md/api-responses-json/`
+- ✅ Updated all file paths to reflect new structure
+- ✅ Enhanced `orbit-api-documents-md/README.md` with AI agent guidelines
+- ✅ Simplified this document - removed redundant sections

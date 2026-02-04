@@ -5,6 +5,7 @@
 **Last Updated:** 2026-02-04
 
 > **Key Documentation References:**
+>
 > - [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)
 > - [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts)
 > - [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries)
@@ -13,49 +14,49 @@
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| **2.13** | 2026-02-04 | **Use Actual Timestamps from Orbit API**<br>• Fixed `UpsertRun` Named Query to use actual `startTime` and `endTime` from Orbit API instead of `SYSUTCDATETIME()`<br>• Added `start_time` and `end_time` parameters to `UpsertRun` Named Query<br>• Updated `_process_run_event()` to pass `startTime` and `endTime` in the payload<br>• Updated `handle_run_event()` to extract timestamps and pass to `_upsert_run()`<br>• Updated `_upsert_run()` to accept and pass timestamps to Named Query<br>• `CompletedAtUtc` now records actual failure/completion time, not polling discovery time<br>• `DurationMinutes` calculation is now accurate (previously could be 60+ seconds off)<br>• Uses `COALESCE()` to fall back to server time if API timestamp is null<br>• **Why:** When a mission fails at 10:00:00 but polling detects it at 10:01:00, the DB should record 10:00:00 (actual failure time), not 10:01:00 |
-| **2.12** | 2026-02-04 | **PyDataset Row Access Fix**<br>• Fixed `.get()` method usage in `evaluate_and_send()` function - replaced `rule.get("RuleName", default)` with bracket notation<br>• Fixed `.get()` method usage in `handle_run_event()` function - replaced nested `.get()` calls with bracket notation for consistency<br>• PyDataset row objects (Java objects) support bracket notation `[]` and `in` operator but do NOT have `.get()` method<br>• Updated pattern: use `row["ColName"] if "ColName" in row else default` instead of `row.get("ColName", default)`<br>• **Why:** Calling `.get()` on PyDataset row objects causes runtime errors; bracket notation is the correct approach for both PyDataset rows and dictionaries |
+| Version  | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **2.13** | 2026-02-04 | **Use Actual Timestamps from Orbit API**<br>• Fixed `UpsertRun` Named Query to use actual `startTime` and `endTime` from Orbit API instead of `SYSUTCDATETIME()`<br>• Added `start_time` and `end_time` parameters to `UpsertRun` Named Query<br>• Updated `_process_run_event()` to pass `startTime` and `endTime` in the payload<br>• Updated `handle_run_event()` to extract timestamps and pass to `_upsert_run()`<br>• Updated `_upsert_run()` to accept and pass timestamps to Named Query<br>• `CompletedAtUtc` now records actual failure/completion time, not polling discovery time<br>• `DurationMinutes` calculation is now accurate (previously could be 60+ seconds off)<br>• Uses `COALESCE()` to fall back to server time if API timestamp is null<br>• **Why:** When a mission fails at 10:00:00 but polling detects it at 10:01:00, the DB should record 10:00:00 (actual failure time), not 10:01:00                                                                                                                   |
+| **2.12** | 2026-02-04 | **PyDataset Row Access Fix**<br>• Fixed `.get()` method usage in `evaluate_and_send()` function - replaced `rule.get("RuleName", default)` with bracket notation<br>• Fixed `.get()` method usage in `handle_run_event()` function - replaced nested `.get()` calls with bracket notation for consistency<br>• PyDataset row objects (Java objects) support bracket notation `[]` and `in` operator but do NOT have `.get()` method<br>• Updated pattern: use `row["ColName"] if "ColName" in row else default` instead of `row.get("ColName", default)`<br>• **Why:** Calling `.get()` on PyDataset row objects causes runtime errors; bracket notation is the correct approach for both PyDataset rows and dictionaries                                                                                                                                                                                                                                                                                                                 |
 | **2.11** | 2026-02-03 | **Enhanced Logging for Monitoring and Troubleshooting**<br>• Added comprehensive logging to all database query operations (UpsertRun, GetSiteConfig, GetRunNotificationContext, GetNotificationRules, GetNotificationRecipients, InsertNotificationHistory)<br>• Enhanced logging in `poll_recent_runs()`: API fetch start, run counts, status change detection<br>• Enhanced logging in `handle_run_event()`: event details, status mapping, warnings for unknown statuses<br>• Enhanced logging in `_update_mission_tags()`: tag write counts, success/error summaries<br>• Enhanced logging in `evaluate_and_send()`: rule evaluation, recipient matching, pattern validation<br>• Added new section 7.5: Logging Reference with logger hierarchy, recommended levels, sample messages, and troubleshooting guide<br>• Loggers now track: query parameters, row counts, status changes, API responses, notification matching, email sending<br>• **Why:** Makes it easy to monitor system status and troubleshoot issues in production |
-| **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early |
-| **2.9** | 2026-02-03 | **Orbit API Status Value Fix**<br>• Fixed `status_map` and `trigger_type_map` in `run_event_handlers` module to handle Orbit API's actual status values<br>• Added `"success": "COMP"` mapping - Orbit API returns "success" for completed runs, not "completed"<br>• Added `"success": "RUN_COMP"` to trigger type mapping for proper notification routing<br>• Previously caused "Unhandled run status for trigger mapping: success" warning and incorrect tag values<br>• Tags were being written with wrong status code ("PEND" instead of "COMP")<br>• **Why:** Orbit API documentation and actual response values differ; "success" is the real completed status |
-| **2.8** | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost |
-| **2.7** | 2026-02-03 | **PyDataSet Conversion Bug Fix**<br>• Fixed dictionary comprehension in webhook handler's PyDataSet-to-dict conversion<br>• Corrected `getValueAt(0,1)` to `getValueAt(0,i)` to properly iterate through all columns<br>• Bug caused all dictionary values to reference column index 1 instead of respective column indices<br>• Affects context parameter extraction in `doPost()` function<br>• Ensures proper mapping of column names to their corresponding values |
-| **2.6** | 2026-02-03 | **Simplified Script Console Test Pattern**<br>• Removed `system.util.invokeLater()` pattern from Script Console tests (function does not exist in Ignition 8.1)<br>• Restructured test script from three separate functions to sequential execution<br>• Tests now run immediately one after another without delays<br>• Simplified output formatting for cleaner console results<br>• Improves usability for developers testing webhook handlers in Script Console |
-| **2.5** | 2026-02-03 | **TEST_MODE for SMTP-Free Testing**<br>• Added `TEST_MODE` flag to `notification_engine` module for testing without SMTP configuration<br>• Updated `_send_and_log()` function to skip email sending when TEST_MODE=True<br>• Enhanced testing section with comprehensive guidance for development without SMTP<br>• Added expected results checklist (logs, database, tags) for Script Console tests<br>• Prevents SMTP errors from blocking webhook handler development workflow<br>• Enables full integration testing (DB updates, tag writes, notification logic) before production |
-| **2.4** | 2026-02-03 | **Named Query Default Value Handling Documentation**<br>• Added critical warning: Ignition 8.1 Named Queries do NOT have built-in default value feature<br>• Documented two approaches for handling defaults: Calling Code vs SQL COALESCE<br>• Updated all parameter tables to clarify "Recommended Default" vs "Required" columns<br>• Added SQL COALESCE() fallbacks to queries (`GetAllRobots`, `GetSiteConfig`, `GetMissionHistory`)<br>• Enhanced "Calling Named Queries from Scripts" section with proper default handling patterns<br>• Added helper function examples showing best practices for wrapping Named Queries<br>• Corrects common misconception about Named Query parameter configuration |
-| **2.3** | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems |
-| **2.2** | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping |
-| **2.1** | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12 |
-| **2.0** | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow |
-| **1.9** | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference |
-| **1.8** | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API |
-| **1.7** | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic |
-| **1.6** | 2026-02-02 | Added robot validation filter for invalid/empty robots from Orbit API |
-| **1.5** | 2026-02-01 | Initial simplified demo plan |
+| **2.10** | 2026-02-03 | **Added Pre-Flight Check Script for Testing**<br>• Added comprehensive pre-flight check script to Section 6.11.2 (before event tests)<br>• Verifies: helpers module, get_robot_tag_base(), UDT instance existence, run_event_handlers module, notification_engine module, UpsertRun Named Query<br>• Helps catch configuration issues before running event tests<br>• Improves debugging by isolating problems (module import vs. tag path vs. database)<br>• Organized testing into Step 1 (Pre-Flight) and Step 2 (Event Tests)<br>• **Why:** Structural changes require verification before testing; catches issues early                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **2.9**  | 2026-02-03 | **Orbit API Status Value Hypothesis (UNVERIFIED)**<br>• Added `"success": "COMP"` mapping based on common API patterns (NOT verified with real API)<br>• Added `"success": "RUN_COMP"` to trigger type mapping<br>• **ASSUMPTION:** APIs often return "success" instead of "completed" for finished runs<br>• **STATUS:** ⚠️ **NEEDS VERIFICATION** - Check actual Orbit API responses<br>• **Why:** OpenAPI spec doesn't document missionStatus possible values; this is an educated guess                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **2.8**  | 2026-02-03 | **Polling-Based Architecture (No Web Dev Module Required)**<br>• Removed Web Dev module dependency - no additional license purchase needed<br>• Enhanced `runs_polling` module with status change detection and notification triggering<br>• Renamed `webhook_handlers` → `run_event_handlers` module (same logic, different entry point)<br>• Polling now handles full flow: API poll → change detection → DB update → tag write → notification<br>• Moved Web Dev webhook approach to Appendix A for future reference<br>• Updated testing section for polling-based approach<br>• Updated deployment checklist to remove Web Dev requirements<br>• **Why:** Web Dev module requires separate purchase; polling achieves same functionality at no extra cost                                                                                                                                                                                                                                                                            |
+| **2.7**  | 2026-02-03 | **PyDataSet Conversion Bug Fix**<br>• Fixed dictionary comprehension in webhook handler's PyDataSet-to-dict conversion<br>• Corrected `getValueAt(0,1)` to `getValueAt(0,i)` to properly iterate through all columns<br>• Bug caused all dictionary values to reference column index 1 instead of respective column indices<br>• Affects context parameter extraction in `doPost()` function<br>• Ensures proper mapping of column names to their corresponding values                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **2.6**  | 2026-02-03 | **Simplified Script Console Test Pattern**<br>• Removed `system.util.invokeLater()` pattern from Script Console tests (function does not exist in Ignition 8.1)<br>• Restructured test script from three separate functions to sequential execution<br>• Tests now run immediately one after another without delays<br>• Simplified output formatting for cleaner console results<br>• Improves usability for developers testing webhook handlers in Script Console                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **2.5**  | 2026-02-03 | **TEST_MODE for SMTP-Free Testing**<br>• Added `TEST_MODE` flag to `notification_engine` module for testing without SMTP configuration<br>• Updated `_send_and_log()` function to skip email sending when TEST_MODE=True<br>• Enhanced testing section with comprehensive guidance for development without SMTP<br>• Added expected results checklist (logs, database, tags) for Script Console tests<br>• Prevents SMTP errors from blocking webhook handler development workflow<br>• Enables full integration testing (DB updates, tag writes, notification logic) before production                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **2.4**  | 2026-02-03 | **Named Query Default Value Handling Documentation**<br>• Added critical warning: Ignition 8.1 Named Queries do NOT have built-in default value feature<br>• Documented two approaches for handling defaults: Calling Code vs SQL COALESCE<br>• Updated all parameter tables to clarify "Recommended Default" vs "Required" columns<br>• Added SQL COALESCE() fallbacks to queries (`GetAllRobots`, `GetSiteConfig`, `GetMissionHistory`)<br>• Enhanced "Calling Named Queries from Scripts" section with proper default handling patterns<br>• Added helper function examples showing best practices for wrapping Named Queries<br>• Corrects common misconception about Named Query parameter configuration                                                                                                                                                                                                                                                                                                                             |
+| **2.3**  | 2026-02-02 | **Notification Rules Scalability Design Documentation**<br>• Documented hybrid approach for notification rule processing (flexible scaling)<br>• Enhanced `GetNotificationRules` query documentation with design philosophy<br>• Explained 3 phases: Simple (single rule), Multi-Team (all rules), Enterprise (complex routing)<br>• Added scaling guide to `notification_engine` module with Phase 1/2/3 examples<br>• Clarified why query returns ALL rules ordered by priority (no TOP 1)<br>• Enables easy migration from simple to complex notification logic without database changes<br>• Aligns with modern industrial IoT best practices for alerting systems                                                                                                                                                                                                                                                                                                                                                                    |
+| **2.2**  | 2026-02-02 | **Fixed Notification Rules Schema Consistency**<br>• Fixed INSERT statement for `RoboticsNotificationRules` to explicitly include `StatusCodeFilter` column<br>• Added Rule 7: example demonstrating status filtering (Failed Patrol missions only)<br>• Updated comment to reflect "All 6 Trigger Types" (was showing 5 with 6 rules)<br>• Improved documentation clarity for mission pattern and status filtering features<br>• Aligns INSERT with table schema, query logic, and Orbit API field mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **2.1**  | 2026-02-02 | **Added Comprehensive Webhook Testing Documentation**<br>• Added Section 6.11: Testing the Webhook Implementation (~480 lines)<br>• Includes 3 testing methods: Script Console (recommended), HTTP endpoint (curl), and optional test utility module<br>• Added validation checklist for logs, database, tags, and notifications<br>• Added troubleshooting guide with common issues and solutions<br>• Added performance testing script for load testing and thread safety<br>• Renumbered section 6.11 (Named Queries) → 6.12                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **2.0**  | 2026-02-02 | **Simplified Plan for Actual Orbit API Capabilities**<br>• Restructured UDT to focus on mission data (what Orbit provides)<br>• Renamed `robot_polling` → `runs_polling` module (polls /runs, not telemetry)<br>• Updated `orbit_api` module with accurate docstrings and `get_anomalies()` function<br>• Added Gateway Startup Script for initial configuration sync<br>• Changed timer interval from 15s to 60s (webhooks are primary, polling is backup)<br>• Telemetry tags (Battery, Pose) marked as placeholders for future Spot SDK<br>• Updated deployment checklist to reflect actual data flow                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **1.9**  | 2026-02-02 | **Orbit API Limitation Documentation & Spot SDK Alternative**<br>• Documented that Orbit `/api/v0/robots` only provides configuration data, NOT real-time telemetry<br>• Added Section 11.1: Orbit API Limitation Details (what it does/doesn't provide)<br>• Added Section 11.2: Future Enhancement - Direct Spot SDK Integration (Plan B)<br>• Includes middleware architecture, Spot SDK data available, implementation outline<br>• Corrected Section 11 to accurately reflect Orbit API capabilities<br>• **Note:** Spot SDK integration not implemented, documented for future reference                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **1.8**  | 2026-02-02 | **Hostname-Based Tag Naming (Production Best Practice)**<br>• Updated all examples to use actual hostname (e.g., `spot-BD-12345678`) instead of friendly names<br>• Modified `get_robot_tag_base()` to append hostname directly (no formatting) in demo mode<br>• Updated tag hierarchy examples, seed data, and UDT instances<br>• Supports both database lookup (production) and hostname concatenation (demo)<br>• Better traceability and consistency with Orbit API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **1.7**  | 2026-02-02 | **Tag Path Configuration Update**<br>• Centralized tag base path in `helpers` module<br>• Added `get_robot_tag_base()` function with demo/production modes<br>• Added `Robotics/GetRobotTagPath` Named Query for multi-site support<br>• Updated `robot_polling` and `webhook` to use helper function<br>• Added section 4.3: Tag Path Configuration Strategy<br>• **Migration Path:** Demo (hardcoded) → Production (database lookup)<br>• **Bug Fix:** Corrected syntax error in `_update_robot_tags()` error checking logic                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **1.6**  | 2026-02-02 | Added robot validation filter for invalid/empty robots from Orbit API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **1.5**  | 2026-02-01 | Initial simplified demo plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ---
 
 ## 1. Objectives
 
-| Objective | Description |
-|-----------|-------------|
-| **Core Integration** | Integrate Spot mission → Orbit → Ignition Perspective |
+| Objective                     | Description                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| **Core Integration**          | Integrate Spot mission → Orbit → Ignition Perspective                              |
 | **Conditional Notifications** | Automatically send emails to different recipients based on mission, tag, or status |
-| **Scalable Naming** | Maintain consistent naming and rules even as sites/projects scale up |
-| **Process Clarity** | Summarize the overall flow using a **SIPOC** diagram |
+| **Scalable Naming**           | Maintain consistent naming and rules even as sites/projects scale up               |
+| **Process Clarity**           | Summarize the overall flow using a **SIPOC** diagram                               |
 
 ### 1.1 Demo Scope (MVP)
 
-| In Scope | Out of Scope (Future) |
-|----------|----------------------|
-| Single site, 1-2 robots | Multi-site federation |
-| Polling-based run sync (60s) | Store & Forward historian |
-| Change detection + notifications | Complex alarm pipelines |
-| Simple email notifications | SMS/Push notifications |
-| Basic Perspective dashboard | Role-based multi-dashboards |
-| Core database tables | Advanced partitioning |
+| In Scope                         | Out of Scope (Future)       |
+| -------------------------------- | --------------------------- |
+| Single site, 1-2 robots          | Multi-site federation       |
+| Polling-based run sync (60s)     | Store & Forward historian   |
+| Change detection + notifications | Complex alarm pipelines     |
+| Simple email notifications       | SMS/Push notifications      |
+| Basic Perspective dashboard      | Role-based multi-dashboards |
+| Core database tables             | Advanced partitioning       |
 
 > **Note (v2.8):** This plan uses **polling-based architecture** instead of webhooks. Polling runs every 60 seconds, detects status changes, and triggers notifications. This approach requires no Web Dev module (no additional license cost). See Appendix A if you need real-time webhooks in the future.
 
@@ -86,7 +87,7 @@ flowchart TB
         P4[4. UPDATE<br/>Write to Tags]
         P5[5. EVALUATE<br/>Match notification rules]
         P6[6. SEND<br/>Email via SMTP]
-        
+
         P1 --> P2 --> P3 --> P4 --> P5 --> P6
     end
 
@@ -107,13 +108,13 @@ flowchart TB
 
 ### 2.2 SIPOC Summary Table
 
-| Element | Description |
-|---------|-------------|
-| **S**uppliers | Spot Robot, Orbit Server, SMTP Server |
-| **I**nputs | Webhook payloads, Robot API data, Notification rules |
-| **P**rocess | Receive → Parse → Store → Update Tags → Evaluate Rules → Send Email |
-| **O**utputs | Emails, Dashboard, Mission History |
-| **C**ustomers | Operators, Maintenance, Management |
+| Element       | Description                                                         |
+| ------------- | ------------------------------------------------------------------- |
+| **S**uppliers | Spot Robot, Orbit Server, SMTP Server                               |
+| **I**nputs    | Webhook payloads, Robot API data, Notification rules                |
+| **P**rocess   | Receive → Parse → Store → Update Tags → Evaluate Rules → Send Email |
+| **O**utputs   | Emails, Dashboard, Mission History                                  |
+| **C**ustomers | Operators, Maintenance, Management                                  |
 
 ---
 
@@ -136,10 +137,10 @@ flowchart TB
             POLL[Gateway Timer<br/>Poll every 60s]
             CHANGE[Change Detection<br/>Status Tracking]
         end
-        
+
         TAGS[(Memory Tags<br/>SpotRobot UDT)]
         NQ[Named Queries]
-        
+
         subgraph NOTIFY["Notification"]
             RULES[Rule Evaluator]
             SMTP[SMTP Client]
@@ -156,12 +157,12 @@ flowchart TB
 
     SPOT1 --> ORBIT_API
     ORBIT_API -->|GET /runs| POLL
-    
+
     POLL --> CHANGE
     CHANGE -->|Status Changed| TAGS
     CHANGE -->|Insert/Update| NQ --> MSSQL
     CHANGE --> RULES --> SMTP
-    
+
     TAGS --> DASH
     MSSQL --> DASH
 ```
@@ -170,8 +171,8 @@ flowchart TB
 
 > **Note (v2.8):** This architecture uses **polling only** (no webhooks). Polling detects status changes and triggers the same notification flow that webhooks would. This removes the Web Dev module dependency.
 
-| Flow | Trigger | Purpose | Update Rate |
-|------|---------|---------|-------------|
+| Flow                           | Trigger       | Purpose                                                            | Update Rate   |
+| ------------------------------ | ------------- | ------------------------------------------------------------------ | ------------- |
 | **Polling + Change Detection** | Gateway Timer | Poll Orbit API, detect changes, update DB/Tags, send notifications | Every 60000ms |
 
 ---
@@ -182,16 +183,16 @@ flowchart TB
 
 ### 4.1 Quick Reference
 
-| Layer | Convention | Example |
-|-------|------------|---------|
-| **SQL Tables** | PascalCase, Plural | `RoboticsRuns`, `RoboticsRobots` *(schema-less prefix variant)* |
-| **SQL Columns** | PascalCase | `MissionStatusCode`, `StartedAtUtc` |
-| **Tag Paths** | ISA-95 Hierarchy + Hostname-based Device | `Enterprise/Site001/Assembly/Line001/spot-BD-12345678/BatteryLevel` |
-| **Tag Names** | PascalCase | `BatteryLevel`, `IsConnected`, `MissionStatusCode` |
-| **Robot Device Names** | **Use Orbit hostname as-is** | `spot-BD-12345678` *(not formatted - use actual hostname)* |
-| **Display Names** | Use Nickname field from DB | "Assembly Line Spot" *(stored in `RoboticsRobots.Nickname`)* |
-| **Python** | snake_case | `battery_level`, `mission_status_code` |
-| **Named Queries** | PascalCase | `GetMissionHistory`, `UpsertRun` |
+| Layer                  | Convention                               | Example                                                             |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| **SQL Tables**         | PascalCase, Plural                       | `RoboticsRuns`, `RoboticsRobots` _(schema-less prefix variant)_     |
+| **SQL Columns**        | PascalCase                               | `MissionStatusCode`, `StartedAtUtc`                                 |
+| **Tag Paths**          | ISA-95 Hierarchy + Hostname-based Device | `Enterprise/Site001/Assembly/Line001/spot-BD-12345678/BatteryLevel` |
+| **Tag Names**          | PascalCase                               | `BatteryLevel`, `IsConnected`, `MissionStatusCode`                  |
+| **Robot Device Names** | **Use Orbit hostname as-is**             | `spot-BD-12345678` _(not formatted - use actual hostname)_          |
+| **Display Names**      | Use Nickname field from DB               | "Assembly Line Spot" _(stored in `RoboticsRobots.Nickname`)_        |
+| **Python**             | snake_case                               | `battery_level`, `mission_status_code`                              |
+| **Named Queries**      | PascalCase                               | `GetMissionHistory`, `UpsertRun`                                    |
 
 ### 4.2 Tag Hierarchy (Demo)
 
@@ -226,20 +227,22 @@ This project uses a **hostname-based naming approach** with two operational mode
 
 **Why hostname-based naming?**
 
-| Benefit | Description |
-|---------|-------------|
-| **API Consistency** | Tag names match Orbit hostname exactly (no translation needed) |
-| **Traceability** | Direct correlation between tags and physical robot serial numbers |
-| **Robot Swaps** | No confusion when hardware is replaced or moved |
-| **Debugging** | Logs, tags, and API responses use identical identifiers |
-| **Multi-Site** | BD serial numbers guarantee uniqueness across all sites |
+| Benefit             | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| **API Consistency** | Tag names match Orbit hostname exactly (no translation needed)    |
+| **Traceability**    | Direct correlation between tags and physical robot serial numbers |
+| **Robot Swaps**     | No confusion when hardware is replaced or moved                   |
+| **Debugging**       | Logs, tags, and API responses use identical identifiers           |
+| **Multi-Site**      | BD serial numbers guarantee uniqueness across all sites           |
 
 **Example:** Robot hostname `spot-BD-12345678` creates tag path:
+
 ```
 [default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678
 ```
 
 **Human-Readable Names:** Use the `Nickname` database field for displays:
+
 - **Tags/Data:** `spot-BD-12345678` (hostname)
 - **UI Display:** "Assembly Line Spot" (nickname)
 
@@ -248,12 +251,14 @@ This project uses a **hostname-based naming approach** with two operational mode
 **When to use:** Single site with 1-2 robots, quick testing
 
 **Configuration:** Set in `helpers` module
+
 ```python
 TAG_BASE_PATH = "[default]Enterprise/Site001/Assembly/Line001"
 USE_DATABASE_FOR_TAG_PATHS = False
 ```
 
 **How it works:**
+
 - Tag paths are constructed as: `TAG_BASE_PATH + "/" + robot_hostname`
 - Example: `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`
 - **No name formatting/conversion** - uses hostname exactly as-is
@@ -265,11 +270,13 @@ USE_DATABASE_FOR_TAG_PATHS = False
 **When to use:** Multiple sites, different tag hierarchies, or 3+ robots
 
 **Configuration:** Set in `helpers` module
+
 ```python
 USE_DATABASE_FOR_TAG_PATHS = True
 ```
 
 **How it works:**
+
 - Tag paths are retrieved from `RoboticsRobots.TagBasePath` column
 - Queries database using `Robotics/GetRobotTagPath` Named Query
 - Supports different tag structures per site/robot
@@ -277,24 +284,25 @@ USE_DATABASE_FOR_TAG_PATHS = True
 
 **Migration Example:**
 
-| Robot Hostname | Demo Mode Path (Concatenated) | Production Mode Path (From DB) |
-|----------------|-------------------------------|--------------------------------|
+| Robot Hostname   | Demo Mode Path (Concatenated)                                   | Production Mode Path (From DB)                                  |
+| ---------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
 | spot-BD-12345678 | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678` | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678` |
 | spot-BD-87654321 | `[default]Enterprise/Site001/Assembly/Line001/spot-BD-87654321` | `[default]Enterprise/Site002/Warehouse/Area03/spot-BD-87654321` |
 
 **Advantages of This Approach:**
 
-| Benefit | Description |
-|---------|-------------|
-| **Easy Start** | Demo mode requires no database setup for tag paths |
-| **Clean Migration** | Change one flag (`USE_DATABASE_FOR_TAG_PATHS`) to switch modes |
-| **No Code Rewrite** | Both modes use the same `helpers.get_robot_tag_base()` function |
-| **Flexible Scaling** | Production mode supports multi-site with different hierarchies |
-| **Backwards Compatible** | Can test database mode before full cutover |
+| Benefit                  | Description                                                     |
+| ------------------------ | --------------------------------------------------------------- |
+| **Easy Start**           | Demo mode requires no database setup for tag paths              |
+| **Clean Migration**      | Change one flag (`USE_DATABASE_FOR_TAG_PATHS`) to switch modes  |
+| **No Code Rewrite**      | Both modes use the same `helpers.get_robot_tag_base()` function |
+| **Flexible Scaling**     | Production mode supports multi-site with different hierarchies  |
+| **Backwards Compatible** | Can test database mode before full cutover                      |
 
 **Implementation Locations:**
 
 The `helpers.get_robot_tag_base()` function is called in:
+
 1. `robot_polling._update_robot_tags()` - For polling tag updates
 2. `orbit_webhook._update_mission_tags()` - For webhook tag updates
 
@@ -310,16 +318,16 @@ The `helpers.get_robot_tag_base()` function is called in:
 
 **Logical → Physical mapping (Demo MVP):**
 
-| Logical Entity | Physical Table |
-|---------------|----------------|
-| `Sites` | `RoboticsSites` |
-| `Robots` | `RoboticsRobots` |
-| `Runs` | `RoboticsRuns` |
-| `NotificationRules` | `RoboticsNotificationRules` |
+| Logical Entity           | Physical Table                   |
+| ------------------------ | -------------------------------- |
+| `Sites`                  | `RoboticsSites`                  |
+| `Robots`                 | `RoboticsRobots`                 |
+| `Runs`                   | `RoboticsRuns`                   |
+| `NotificationRules`      | `RoboticsNotificationRules`      |
 | `NotificationRecipients` | `RoboticsNotificationRecipients` |
-| `NotificationHistories` | `RoboticsNotificationHistories` |
-| `MissionStatusCodes` | `RoboticsMissionStatusCodes` |
-| `TriggerTypeCodes` | `RoboticsTriggerTypeCodes` |
+| `NotificationHistories`  | `RoboticsNotificationHistories`  |
+| `MissionStatusCodes`     | `RoboticsMissionStatusCodes`     |
+| `TriggerTypeCodes`       | `RoboticsTriggerTypeCodes`       |
 
 ### 5.1 Entity Relationship Diagram
 
@@ -328,11 +336,11 @@ erDiagram
     Sites ||--o{ Robots : contains
     Sites ||--o{ Runs : logs
     Sites ||--o{ NotificationRules : configures
-    
+
     Robots ||--o{ Runs : executes
-    
+
     Runs ||--o{ NotificationHistories : generates
-    
+
     NotificationRules ||--o{ NotificationRecipients : has
     NotificationRules ||--o{ NotificationHistories : triggers
 
@@ -347,7 +355,7 @@ erDiagram
         bit IsActive
         datetime CreatedAtUtc
     }
-    
+
     Robots {
         int RobotId PK
         int SiteId FK
@@ -357,7 +365,7 @@ erDiagram
         bit IsActive
         datetime LastSeenAtUtc
     }
-    
+
     Runs {
         int RunId PK
         int SiteId FK
@@ -369,7 +377,7 @@ erDiagram
         datetime CompletedAtUtc
         bit IsProcessed
     }
-    
+
     NotificationRules {
         int NotificationRuleId PK
         int SiteId FK
@@ -381,7 +389,7 @@ erDiagram
         string EmailBodyTemplate
         bit IsActive
     }
-    
+
     NotificationRecipients {
         int NotificationRecipientId PK
         int NotificationRuleId FK
@@ -389,7 +397,7 @@ erDiagram
         string Email
         bit IsActive
     }
-    
+
     NotificationHistories {
         int NotificationHistoryId PK
         int NotificationRuleId FK
@@ -558,16 +566,16 @@ GO
 -- SmtpHost/FromAddr are optional; if NULL, Python code falls back to hardcoded defaults.
 INSERT INTO RoboticsSites (SiteCode, Name, OrbitBaseUrl, OrbitApiToken, SmtpHost, FromAddr)
 VALUES (
-    'SITE001', 
-    'Demo Factory', 
-    'https://orbit.demo.local', 
+    'SITE001',
+    'Demo Factory',
+    'https://orbit.demo.local',
     'your-api-token-here',
     'smtp.company.com',              -- Replace with your SMTP server (or NULL to use fallback)
     'factory-alerts@company.com'     -- Replace with your from address (or NULL to use fallback)
 );
 
 -- Demo Robot
--- Note: 
+-- Note:
 --   - Hostname must match exactly what's registered in Orbit (typically BD serial-based)
 --   - TagBasePath uses the hostname for consistency and traceability
 --   - Nickname is human-friendly name for UI display
@@ -582,25 +590,25 @@ INSERT INTO RoboticsTriggerTypeCodes VALUES
 -- Sample Notification Rules (All 6 Trigger Types)
 -- Demonstrates both MissionNamePattern (LIKE matching) and StatusCodeFilter (exact matching)
 INSERT INTO RoboticsNotificationRules (SiteId, RuleName, TriggerTypeCode, MissionNamePattern, StatusCodeFilter, EmailSubjectTemplate, EmailBodyTemplate)
-VALUES 
+VALUES
 -- Rule 1: Mission Started (any mission, any status)
 (1, 'Mission Started Alert', 'RUN_START', NULL, NULL,
- '[INFO] Mission Started: {{MissionName}}', 
+ '[INFO] Mission Started: {{MissionName}}',
  'Robot {{RobotNickname}} has started mission {{MissionName}} at {{StartedAtUtc}}. Monitor progress in dashboard.'),
 
 -- Rule 2: Mission Completed (any mission, any status)
 (1, 'Mission Completed', 'RUN_COMP', NULL, NULL,
- '[SUCCESS] Mission Completed: {{MissionName}}', 
+ '[SUCCESS] Mission Completed: {{MissionName}}',
  'Robot {{RobotNickname}} completed mission {{MissionName}} at {{CompletedAtUtc}}. Duration: {{Duration}} minutes.'),
 
 -- Rule 3: Mission Failed (any mission, any status)
 (1, 'Mission Failed Alert', 'RUN_FAIL', NULL, NULL,
- '[ALERT] Mission Failed: {{MissionName}}', 
+ '[ALERT] Mission Failed: {{MissionName}}',
  'Robot {{RobotNickname}} failed mission {{MissionName}} at {{CompletedAtUtc}}. Please investigate immediately.'),
 
 -- Rule 4: Inspection Complete (specific mission pattern, any status)
 (1, 'Inspection Complete', 'RUN_COMP', '%Inspection%', NULL,
- '[INFO] Inspection Complete: {{MissionName}}', 
+ '[INFO] Inspection Complete: {{MissionName}}',
  'Inspection mission {{MissionName}} completed successfully on {{CompletedAtUtc}}. Duration: {{Duration}} minutes. Review results in Orbit.'),
 
 -- Rule 5: Battery Low Warning (not mission-related)
@@ -620,7 +628,7 @@ VALUES
 
 -- Recipients for rules (using same email with different display names for testing)
 INSERT INTO RoboticsNotificationRecipients (NotificationRuleId, RecipientTypeCode, Email, DisplayName)
-VALUES 
+VALUES
 -- Rule 1: Mission Started
 (1, 'to', 'your.email@example.com', 'Operations Team'),
 
@@ -650,7 +658,7 @@ VALUES
 
 -- Sample Run Data (for testing dashboard and notifications)
 INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc, IsProcessed)
-VALUES 
+VALUES
 -- Completed missions
 (1, 1, '550e8400-e29b-41d4-a716-446655440001', 'Inspection-Zone-A', 'COMP', DATEADD(HOUR, -2, SYSUTCDATETIME()), DATEADD(MINUTE, -105, SYSUTCDATETIME()), 1),
 (1, 1, '550e8400-e29b-41d4-a716-446655440002', 'Patrol-North', 'COMP', DATEADD(HOUR, -4, SYSUTCDATETIME()), DATEADD(HOUR, -3, SYSUTCDATETIME()), 1),
@@ -669,31 +677,31 @@ VALUES
 -- Sample Notification History (for audit trail testing)
 -- Note: Recipients field stores actual recipients from RoboticsNotificationRecipients at send time
 INSERT INTO RoboticsNotificationHistories (NotificationRuleId, RunId, TriggerTypeCode, Recipients, Subject, Body, IsSent, SentAtUtc)
-VALUES 
+VALUES
 -- Successfully sent notifications
 -- Rule 2 recipients: Operations Team (TO), Management (CC)
-(2, 1, 'RUN_COMP', 
- '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Management"}]}', 
- '[SUCCESS] Mission Completed: Inspection-Zone-A', 
+(2, 1, 'RUN_COMP',
+ '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Management"}]}',
+ '[SUCCESS] Mission Completed: Inspection-Zone-A',
  'Robot Assembly Line Spot completed mission Inspection-Zone-A. Duration: 15 minutes.', 1, DATEADD(MINUTE, -105, SYSUTCDATETIME())),
- 
+
 -- Rule 3 recipients: Operations Team (TO), Robotics Manager (CC)
-(3, 4, 'RUN_FAIL', 
- '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Robotics Manager"}]}', 
- '[ALERT] Mission Failed: Patrol-South', 
+(3, 4, 'RUN_FAIL',
+ '{"to":[{"email":"your.email@example.com","displayName":"Operations Team"}],"cc":[{"email":"your.email@example.com","displayName":"Robotics Manager"}]}',
+ '[ALERT] Mission Failed: Patrol-South',
  'Robot Assembly Line Spot failed mission Patrol-South. Please investigate immediately.', 1, DATEADD(HOUR, -7, SYSUTCDATETIME())),
 
 -- Rule 4 recipients: Quality Team (TO), Operations Team (CC)
-(4, 3, 'RUN_COMP', 
- '{"to":[{"email":"your.email@example.com","displayName":"Quality Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}', 
- '[INFO] Inspection Complete: Inspection-Zone-B', 
+(4, 3, 'RUN_COMP',
+ '{"to":[{"email":"your.email@example.com","displayName":"Quality Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}',
+ '[INFO] Inspection Complete: Inspection-Zone-B',
  'Inspection mission Inspection-Zone-B completed successfully. Duration: 30 minutes.', 1, DATEADD(MINUTE, -330, SYSUTCDATETIME())),
 
 -- Failed to send (for error testing)
 -- Rule 5 recipients: Maintenance Team (TO), Operations Team (CC)
-(5, NULL, 'BATTERY_LOW', 
- '{"to":[{"email":"your.email@example.com","displayName":"Maintenance Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}', 
- '[WARNING] Low Battery: Assembly Line Spot', 
+(5, NULL, 'BATTERY_LOW',
+ '{"to":[{"email":"your.email@example.com","displayName":"Maintenance Team"}],"cc":[{"email":"your.email@example.com","displayName":"Operations Team"}]}',
+ '[WARNING] Low Battery: Assembly Line Spot',
  'Robot Assembly Line Spot battery is below 20%. Current level: 18%. Please recharge soon.', 0, NULL);
 
 GO
@@ -713,11 +721,11 @@ GO
 
 **Important:** Ignition uses **internal project resources** for scripts, NOT file paths. Scripts are stored in Ignition's internal SQLite database as project resources. There are no `.py` files like `project/orbit/poll_robots.py`.
 
-| Resource Type | Location | Storage | Access Scope |
-|---------------|----------|---------|--------------|
-| **Project Library** | Designer > Project Browser > Scripting > Project Library | Internal database (project resource) | Accessible from all scripts within the same project |
-| **Gateway Event Scripts** | Designer > Project Browser > Scripting > Gateway Events | Internal database (project resource) | Gateway scope (runs regardless of clients); can access Project Library |
-| **Web Dev Resources** | Designer > Project Browser > Web Dev | `.py` and `.json` files in `data/projects/` | HTTP endpoints; can access Project Library |
+| Resource Type             | Location                                                 | Storage                                     | Access Scope                                                           |
+| ------------------------- | -------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| **Project Library**       | Designer > Project Browser > Scripting > Project Library | Internal database (project resource)        | Accessible from all scripts within the same project                    |
+| **Gateway Event Scripts** | Designer > Project Browser > Scripting > Gateway Events  | Internal database (project resource)        | Gateway scope (runs regardless of clients); can access Project Library |
+| **Web Dev Resources**     | Designer > Project Browser > Web Dev                     | `.py` and `.json` files in `data/projects/` | HTTP endpoints; can access Project Library                             |
 
 #### Recommended Architecture: Project Library + Gateway Timer Script
 
@@ -776,14 +784,14 @@ Project: SpotOrbitIntegration
 
 **When is this setting needed?**
 
-| Script Type | Needs Gateway Scripting Project Setting? |
-|-------------|------------------------------------------|
-| Gateway Timer Scripts (in project) | ❌ No - runs in project context |
-| Gateway Startup/Shutdown Scripts (in project) | ❌ No - runs in project context |
-| Web Dev endpoints (in project) | ❌ No - runs in project context |
-| Tag Event Scripts (on individual tags) | ✅ Yes - not project-specific |
-| Expression tags with scripting | ✅ Yes - not project-specific |
-| Scripts in Tag Change events | ✅ Yes - not project-specific |
+| Script Type                                   | Needs Gateway Scripting Project Setting? |
+| --------------------------------------------- | ---------------------------------------- |
+| Gateway Timer Scripts (in project)            | ❌ No - runs in project context          |
+| Gateway Startup/Shutdown Scripts (in project) | ❌ No - runs in project context          |
+| Web Dev endpoints (in project)                | ❌ No - runs in project context          |
+| Tag Event Scripts (on individual tags)        | ✅ Yes - not project-specific            |
+| Expression tags with scripting                | ✅ Yes - not project-specific            |
+| Scripts in Tag Change events                  | ✅ Yes - not project-specific            |
 
 **If you DO need it** (e.g., using Tag Event Scripts that call your Project Library):
 
@@ -852,14 +860,15 @@ SpotRobot (UDT Definition)
 
 **Mission Status Codes:**
 
-| Code | Description | Source |
-|------|-------------|--------|
-| `IDLE` | No active mission | Default state |
-| `RUNNING` | Mission in progress | Webhook `run.started` or `/runs` poll |
+| Code        | Description                   | Source                                  |
+| ----------- | ----------------------------- | --------------------------------------- |
+| `IDLE`      | No active mission             | Default state                           |
+| `RUNNING`   | Mission in progress           | Webhook `run.started` or `/runs` poll   |
 | `COMPLETED` | Mission finished successfully | Webhook `run.completed` or `/runs` poll |
-| `FAILED` | Mission failed | Webhook `run.failed` or `/runs` poll |
+| `FAILED`    | Mission failed                | Webhook `run.failed` or `/runs` poll    |
 
 **UDT Instance Example (Hostname-Based Naming):**
+
 ```
 [default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678  ← Instance of SpotRobot UDT
     Parameters:
@@ -868,7 +877,7 @@ SpotRobot (UDT Definition)
 
 Note: Instance name uses the hostname for consistency with Orbit API.
       Display "Assembly Line Spot" nickname in UI using the Nickname database field.
-      
+
       Telemetry tags (Battery, Pose, etc.) are placeholders for future Spot SDK integration.
       They will show default values until Section 11.2 middleware is implemented.
 ```
@@ -879,17 +888,17 @@ Note: Instance name uses the hostname for consistency with Orbit API.
 
 **Location:** Designer > Project Browser > Scripting > Project Library > orbit_api
 
-**Important:** `httpClient` instances are **heavyweight** objects. Per Ignition documentation: *"httpClient instances are heavyweight, so they should be created sparingly and reused as much as possible. For ease of reuse, consider instantiating a new httpClient as a top-level variable in a project library script."*
+**Important:** `httpClient` instances are **heavyweight** objects. Per Ignition documentation: _"httpClient instances are heavyweight, so they should be created sparingly and reused as much as possible. For ease of reuse, consider instantiating a new httpClient as a top-level variable in a project library script."_
 
 > **⚠️ API Limitation (v1.9):** The Orbit API provides **configuration and mission data only**. It does NOT provide real-time telemetry (battery, pose, state). See Section 11.1 for details.
 
 **Available Endpoints:**
 
-| Function | Endpoint | Data Returned |
-|----------|----------|---------------|
-| `get_robots()` | `/api/v0/robots` | Robot config: hostname, nickname, robotIndex, username |
-| `get_runs()` | `/api/v0/runs` | Mission runs: uuid, missionName, status, times, robot info |
-| `get_anomalies()` | `/api/v0/anomalies` | Anomalies: uuid, severity, title, status, timestamps |
+| Function          | Endpoint            | Data Returned                                              |
+| ----------------- | ------------------- | ---------------------------------------------------------- |
+| `get_robots()`    | `/api/v0/robots`    | Robot config: hostname, nickname, robotIndex, username     |
+| `get_runs()`      | `/api/v0/runs`      | Mission runs: uuid, missionName, status, times, robot info |
+| `get_anomalies()` | `/api/v0/anomalies` | Anomalies: uuid, severity, title, status, timestamps       |
 
 **Robot Validation Strategy:** The Orbit API may return robots with empty or invalid data (e.g., empty hostname, null values). This module implements a **defense-in-depth approach**:
 
@@ -911,7 +920,7 @@ Available Data from Orbit:
     - /robots: hostname, nickname, robotIndex, username (CONFIG ONLY)
     - /runs: mission run history with status, times, robot info
     - /anomalies: detected anomalies/alerts from missions
-    
+
 NOT Available from Orbit:
     - Battery level, charging status
     - Robot pose (x, y, theta)
@@ -921,7 +930,7 @@ NOT Available from Orbit:
 
 # ==============================================================================
 # HEAVYWEIGHT CLIENT - Created once, reused for all API calls
-# Per Ignition docs: "httpClient instances are heavyweight, so they should be 
+# Per Ignition docs: "httpClient instances are heavyweight, so they should be
 # created sparingly and reused as much as possible"
 # ==============================================================================
 _client = None
@@ -947,31 +956,31 @@ def _get_config():
 def get_robots():
     """
     GET /api/v0/robots - Fetch robot CONFIGURATION from Orbit API.
-    
+
     IMPORTANT: This returns configuration data only, NOT real-time telemetry.
-    
+
     Returns:
         list: List of robot config dictionaries with fields:
             - hostname (str): Robot hostname, e.g., "spot-BD-12345678"
             - nickname (str): Display name
             - robotIndex (int): Orbit slot number (0-32)
             - username (str): Connection username
-            
+
     Does NOT return: battery, pose, connection status, charging status, state
     """
     logger = system.util.getLogger("orbit.api.robots")
     config = _get_config()
     client = _get_client()
-    
+
     try:
         response = client.get(
             url=config["base_url"] + "/api/v0/robots",
             headers={"Authorization": "Bearer " + config["api_token"]}
         )
-        
+
         if response.good:
             raw_robots = response.json
-            
+
             # Filter out invalid robots (empty hostname, null values, etc.)
             valid_robots = []
             for robot in raw_robots:
@@ -979,14 +988,14 @@ def get_robots():
                     valid_robots.append(robot)
                 else:
                     logger.warn("Skipping invalid robot: {}".format(robot))
-            
+
             logger.debug("Fetched {} valid robots (filtered from {} total)".format(
                 len(valid_robots), len(raw_robots)))
             return valid_robots
         else:
             logger.error("API error: {} - {}".format(response.statusCode, response.text))
             return []
-            
+
     except Exception as e:
         logger.error("Request failed: {}".format(str(e)))
         return []
@@ -995,39 +1004,39 @@ def _is_valid_robot(robot):
     """
     Validate that a robot has required fields.
     Filters out robots with empty/null hostname or invalid robotIndex.
-    
+
     Args:
         robot: Robot dictionary from API
-        
+
     Returns:
         bool: True if robot is valid, False otherwise
     """
     if not robot:
         return False
-    
+
     # Check required field: hostname (must be non-empty string)
     hostname = robot.get("hostname")
     if not hostname or hostname == "" or hostname is None:
         return False
-    
+
     # Check robotIndex is valid (must be >= 0)
     robot_index = robot.get("robotIndex")
     if robot_index is None or robot_index < 0:
         return False
-    
+
     return True
 
 def get_runs(limit=100, robot_hostname=None, start_time=None):
     """
     GET /api/v0/runs - Fetch mission runs from Orbit API.
-    
+
     This is the PRIMARY source of mission activity data.
-    
+
     Args:
         limit: Maximum number of runs to fetch (default 100)
         robot_hostname: Optional filter by robot hostname
         start_time: Optional ISO timestamp to filter runs after this time
-    
+
     Returns:
         list: List of run dictionaries with fields:
             - uuid (str): Run unique identifier
@@ -1044,20 +1053,20 @@ def get_runs(limit=100, robot_hostname=None, start_time=None):
     logger = system.util.getLogger("orbit.api.runs")
     config = _get_config()
     client = _get_client()
-    
+
     params = {"limit": limit}
     if robot_hostname:
         params["robotHostname"] = robot_hostname
     if start_time:
         params["startTime"] = start_time
-    
+
     try:
         response = client.get(
             url=config["base_url"] + "/api/v0/runs",
             headers={"Authorization": "Bearer " + config["api_token"]},
             params=params
         )
-        
+
         if response.good:
             # Orbit returns {"resources": [...]} for runs endpoint
             data = response.json
@@ -1067,7 +1076,7 @@ def get_runs(limit=100, robot_hostname=None, start_time=None):
         else:
             logger.error("API error: {} - {}".format(response.statusCode, response.text))
             return []
-            
+
     except Exception as e:
         logger.error("Request failed: {}".format(str(e)))
         return []
@@ -1075,14 +1084,14 @@ def get_runs(limit=100, robot_hostname=None, start_time=None):
 def get_anomalies(limit=100, status=None, start_time=None):
     """
     GET /api/v0/anomalies - Fetch anomalies/alerts from Orbit API.
-    
+
     Anomalies are issues detected during mission execution.
-    
+
     Args:
         limit: Maximum number of anomalies to fetch
         status: Optional filter by status ("open" or "closed")
         start_time: Optional ISO timestamp to filter anomalies after this time
-    
+
     Returns:
         list: List of anomaly dictionaries with fields:
             - uuid (str): Anomaly unique identifier
@@ -1096,20 +1105,20 @@ def get_anomalies(limit=100, status=None, start_time=None):
     logger = system.util.getLogger("orbit.api.anomalies")
     config = _get_config()
     client = _get_client()
-    
+
     params = {"limit": limit}
     if status:
         params["status"] = status
     if start_time:
         params["startTime"] = start_time
-    
+
     try:
         response = client.get(
             url=config["base_url"] + "/api/v0/anomalies",
             headers={"Authorization": "Bearer " + config["api_token"]},
             params=params
         )
-        
+
         if response.good:
             data = response.json
             anomalies = data.get("resources", data) if isinstance(data, dict) else data
@@ -1118,7 +1127,7 @@ def get_anomalies(limit=100, status=None, start_time=None):
         else:
             logger.error("API error: {} - {}".format(response.statusCode, response.text))
             return []
-            
+
     except Exception as e:
         logger.error("Request failed: {}".format(str(e)))
         return []
@@ -1158,29 +1167,29 @@ _last_poll_time = None
 def poll_recent_runs():
     """
     Main polling function - called by Gateway Timer Script every 60 seconds.
-    
+
     This function:
     1. Fetches recent runs from Orbit API
     2. Detects new runs or status changes
     3. Triggers run_event_handlers for changed runs (DB + Tags + Notifications)
-    
+
     This provides the same functionality as webhooks without requiring Web Dev module.
     """
     global _last_poll_time
     logger = system.util.getLogger("orbit.runs_polling")
-    
+
     try:
         logger.debug("Starting runs poll from Orbit API (limit=50)")
-        
+
         # Fetch recent runs from Orbit API
         runs = orbit_api.get_runs(limit=50)
-        
+
         if not runs:
             logger.debug("No runs returned from API")
             return
-        
+
         logger.info("Fetched {} run(s) from Orbit API".format(len(runs)))
-        
+
         # Process each run and detect changes
         changed_count = 0
         for run in runs:
@@ -1188,22 +1197,22 @@ def poll_recent_runs():
             if not run_uuid:
                 logger.warn("Skipping run with no UUID")
                 continue
-            
+
             # Check if this run's status has changed
             if _has_status_changed(run):
                 logger.debug("Status change detected for run: {}".format(run_uuid))
                 # Status changed - trigger full event processing
                 _process_run_event(run)
                 changed_count += 1
-        
+
         _last_poll_time = system.date.now()
-        
+
         if changed_count > 0:
             logger.info("Poll complete: processed {} run status change(s) out of {} runs".format(
                 changed_count, len(runs)))
         else:
             logger.debug("Poll complete: no status changes detected ({} runs checked)".format(len(runs)))
-        
+
     except Exception as e:
         logger.error("Runs polling failed: {}".format(str(e)))
 
@@ -1211,23 +1220,23 @@ def poll_recent_runs():
 def _has_status_changed(run):
     """
     Check if a run's status has changed since last poll.
-    
+
     Args:
         run: Run dictionary from Orbit API
-        
+
     Returns:
         bool: True if this is a new run or status changed
     """
     global _previous_run_states
     logger = system.util.getLogger("orbit.runs_polling.change_detection")
-    
+
     run_uuid = run.get("uuid", "")
     current_status = run.get("missionStatus", "")
     mission_name = run.get("missionName", "")
-    
+
     # Get previous state for this run
     previous = _previous_run_states.get(run_uuid)
-    
+
     if previous is None:
         # New run we haven't seen before
         _previous_run_states[run_uuid] = {
@@ -1237,7 +1246,7 @@ def _has_status_changed(run):
         logger.info("New run detected: {} - {} (status: {})".format(
             run_uuid[:8], mission_name, current_status))
         return True
-    
+
     if previous["status"] != current_status:
         # Status changed
         logger.info("Status change detected for {}: {} -> {}".format(
@@ -1247,7 +1256,7 @@ def _has_status_changed(run):
             "processed_at": system.date.now()
         }
         return True
-    
+
     # No change
     return False
 
@@ -1256,35 +1265,48 @@ def _process_run_event(run):
     """
     Process a run event by delegating to run_event_handlers.
     Converts Orbit API run data to event payload format.
-    
+
     Args:
         run: Run dictionary from Orbit API /runs endpoint
     """
     logger = system.util.getLogger("orbit.runs_polling.process")
-    
+
     run_uuid = run.get("uuid", "")
     mission_name = run.get("missionName", "")
     robot_hostname = run.get("robotHostname", "")
-    
+
     # Map Orbit status to event type
+    # WARNING: Orbit API doesn't document all possible missionStatus values
+    # See: orbit-api-documents-md/api/actual-responses.md for discovered values
     orbit_status = run.get("missionStatus", "").lower()
+    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
+    # OpenAPI spec doesn't document possible missionStatus values
+    # Common patterns suggest these, but VERIFY with real API responses
     status_to_event = {
-        "running": "run.started",
-        "started": "run.started",
-        "in_progress": "run.started",
-        "completed": "run.completed",
-        "success": "run.completed",
-        "succeeded": "run.completed",
-        "failed": "run.failed",
-        "error": "run.failed",
-        "aborted": "run.failed",
-        "cancelled": "run.failed",
+        "running": "run.started",       # ASSUMED - needs verification
+        "started": "run.started",       # ASSUMED - needs verification
+        "in_progress": "run.started",   # ASSUMED - needs verification
+        "completed": "run.completed",   # ASSUMED - may be "success" instead
+        "success": "run.completed",     # ASSUMED - common pattern but unverified
+        "succeeded": "run.completed",   # ASSUMED - possible synonym
+        "failed": "run.failed",         # ASSUMED - logical but unverified
+        "error": "run.failed",          # ASSUMED - needs verification
+        "aborted": "run.failed",        # ASSUMED - needs verification
+        "cancelled": "run.failed",      # ASSUMED - needs verification
     }
     event_type = status_to_event.get(orbit_status, "run.started")
-    
+
+    # Defensive: Log ALL status values to discover actual API responses
+    logger.info("Processing missionStatus='{}' -> event_type='{}'".format(
+        orbit_status, event_type))
+
+    if orbit_status not in status_to_event:
+        logger.warn("UNKNOWN missionStatus: '{}' for run {} - defaulting to run.started. CHECK ACTUAL API!".format(
+            orbit_status, run_uuid[:8]))
+
     logger.debug("Processing run event: uuid={}, mission={}, status={}, event_type={}".format(
         run_uuid[:8], mission_name, orbit_status, event_type))
-    
+
     # Build payload in same format as webhook would send
     # This allows run_event_handlers to work with both polling and webhooks
     # v2.13: Include startTime and endTime for accurate DB timestamps
@@ -1301,7 +1323,7 @@ def _process_run_event(run):
             }
         }
     }
-    
+
     try:
         # Delegate to run_event_handlers (same logic as webhook would use)
         run_event_handlers.handle_run_event(payload)
@@ -1314,22 +1336,22 @@ def _process_run_event(run):
 def _update_mission_tags(hostname, run_data):
     """
     Update mission-related tags for a single robot.
-    
+
     Args:
         hostname: Robot hostname from Orbit
         run_data: Run dictionary from Orbit API /runs endpoint
-        
+
     Returns:
         bool: True if tags were updated, False otherwise
     """
     logger = system.util.getLogger("orbit.runs_polling.tags")
-    
+
     # Get tag base path using helper
     tag_base = helpers.get_robot_tag_base(hostname)
     if not tag_base:
         logger.warn("Tag path not found for robot: {}".format(hostname))
         return False
-    
+
     # Extract run data
     mission_id = run_data.get("uuid", "")
     mission_name = run_data.get("missionName", "")
@@ -1337,7 +1359,7 @@ def _update_mission_tags(hostname, run_data):
     start_time = _parse_iso_timestamp(run_data.get("startTime"))
     end_time = _parse_iso_timestamp(run_data.get("endTime"))
     nickname = run_data.get("robotNickname", hostname)
-    
+
     # Prepare tag paths and values
     tags_to_write = [
         "{}/MissionId".format(tag_base),
@@ -1349,7 +1371,7 @@ def _update_mission_tags(hostname, run_data):
         "{}/Nickname".format(tag_base),
         "{}/LastPollAtUtc".format(tag_base),
     ]
-    
+
     values = [
         mission_id,
         mission_name,
@@ -1360,18 +1382,18 @@ def _update_mission_tags(hostname, run_data):
         nickname,
         system.date.now(),
     ]
-    
+
     # Write all tags in single blocking call
     try:
         results = system.tag.writeBlocking(tags_to_write, values)
-        
+
         # Check for write errors
         success = True
         for i, result in enumerate(results):
             if not result.isGood():
                 logger.error("Failed to write {}: {}".format(tags_to_write[i], result))
                 success = False
-        
+
         return success
     except Exception as e:
         logger.error("Tag write failed for {}: {}".format(hostname, str(e)))
@@ -1380,18 +1402,18 @@ def _update_mission_tags(hostname, run_data):
 def _map_mission_status(orbit_status):
     """
     Map Orbit mission status to our status codes.
-    
+
     Args:
         orbit_status: Status string from Orbit API
-        
+
     Returns:
         str: Standardized status code (IDLE, RUNNING, COMPLETED, FAILED)
     """
     if not orbit_status:
         return "IDLE"
-    
+
     status_lower = orbit_status.lower()
-    
+
     if status_lower in ["running", "started", "in_progress"]:
         return "RUNNING"
     elif status_lower in ["completed", "success", "succeeded"]:
@@ -1404,16 +1426,16 @@ def _map_mission_status(orbit_status):
 def _parse_iso_timestamp(iso_string):
     """
     Parse ISO timestamp string to Java Date.
-    
+
     Args:
         iso_string: ISO 8601 timestamp string (e.g., "2026-02-02T10:30:00Z")
-        
+
     Returns:
         java.util.Date or None if parsing fails
     """
     if not iso_string:
         return None
-    
+
     try:
         # Handle ISO format with timezone
         # Remove 'Z' and replace with +00:00 for parsing
@@ -1422,7 +1444,7 @@ def _parse_iso_timestamp(iso_string):
         if "." in clean_string:
             parts = clean_string.split(".")
             clean_string = parts[0] + clean_string[clean_string.rfind("+"):]
-        
+
         return system.date.parse(clean_string, "yyyy-MM-dd'T'HH:mm:ssXXX")
     except:
         # Fallback: try simpler format
@@ -1435,23 +1457,23 @@ def sync_robot_config():
     """
     One-time sync of robot configuration from Orbit.
     Updates Nickname and RobotIndex tags from /robots endpoint.
-    
+
     Call this on startup or when robots are added to Orbit.
     """
     logger = system.util.getLogger("orbit.runs_polling.config")
-    
+
     try:
         robots = orbit_api.get_robots()
-        
+
         for robot in robots:
             hostname = robot.get("hostname", "")
             if not hostname:
                 continue
-            
+
             tag_base = helpers.get_robot_tag_base(hostname)
             if not tag_base:
                 continue
-            
+
             # Update config tags
             system.tag.writeBlocking([
                 "{}/Nickname".format(tag_base),
@@ -1460,9 +1482,9 @@ def sync_robot_config():
                 robot.get("nickname", hostname),
                 robot.get("robotIndex", -1),
             ])
-        
+
         logger.info("Synced config for {} robots".format(len(robots)))
-        
+
     except Exception as e:
         logger.error("Robot config sync failed: {}".format(str(e)))
 ```
@@ -1482,7 +1504,7 @@ Purpose: Shared utility functions
 # CONFIGURATION - Tag Base Path
 # ============================================================
 # Hostname-Based Naming: Tag paths use Orbit hostname (e.g., spot-BD-12345678) for consistency
-# 
+#
 # For Demo: Set USE_DATABASE_FOR_TAG_PATHS = False
 #   - Tag path constructed as: TAG_BASE_PATH + "/" + robot_hostname
 #   - Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
@@ -1498,20 +1520,20 @@ USE_DATABASE_FOR_TAG_PATHS = False  # Set True when scaling to multiple sites
 def hostname_to_tag_path(name):
     """
     Convert robot nickname to tag path format.
-    
+
     DEPRECATED: This function is kept for backwards compatibility but is no longer
     recommended. The current best practice is to use the hostname directly.
-    
+
     Note: For hostname-based naming (recommended), use the hostname as-is instead
     of formatting it. This function was designed for friendly names like "Assembly Line Spot".
-    
+
     Examples (legacy approach):
         "Assembly Line Spot" → "AssemblyLineSpot"
         "Spot 001" → "Spot001"
-    
+
     Args:
         name: Robot nickname string (for legacy friendly-name approach)
-    
+
     Returns:
         str: Formatted tag path component
     """
@@ -1520,38 +1542,38 @@ def hostname_to_tag_path(name):
 def get_robot_tag_base(robot_hostname, robot_nickname=None):
     """
     Get the full tag base path for a robot using hostname-based naming.
-    
+
     Hostname-Based Approach (v1.8+):
         Uses Orbit hostname directly (e.g., "spot-BD-12345678") for better
         traceability, API consistency, and multi-site scalability.
-    
+
     Migration Strategy:
         Demo (USE_DATABASE_FOR_TAG_PATHS=False):
             Returns: TAG_BASE_PATH + "/" + robot_hostname
             Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
             Note: Hostname is used directly without formatting
-        
+
         Production (USE_DATABASE_FOR_TAG_PATHS=True):
             Queries RoboticsRobots table for TagBasePath by hostname
             Example: "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678" (from DB)
             Supports multiple sites with different tag hierarchies
-    
+
     Args:
         robot_hostname: Robot hostname from Orbit (e.g., 'spot-BD-12345678')
         robot_nickname: Optional robot nickname (not used in hostname-based approach)
-    
+
     Returns:
         str: Full tag base path, or None if robot not found (database mode)
-    
+
     Examples:
         Demo mode: get_robot_tag_base("spot-BD-12345678")
             → "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678"
-        
+
         Production mode: get_robot_tag_base("spot-BD-12345678")
             → "[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678" (from database)
     """
     logger = system.util.getLogger("helpers")
-    
+
     if USE_DATABASE_FOR_TAG_PATHS:
         # Production: Query database for TagBasePath
         try:
@@ -1559,7 +1581,7 @@ def get_robot_tag_base(robot_hostname, robot_nickname=None):
                 "Robotics/GetRobotTagPath",
                 {"hostname": robot_hostname}
             )
-            
+
             if result.getRowCount() > 0:
                 tag_path = result.getValueAt(0, "TagBasePath")
                 logger.debug("Retrieved tag path from database for {}: {}".format(
@@ -1581,22 +1603,22 @@ def get_robot_tag_base(robot_hostname, robot_nickname=None):
 def get_site_config(site_id=1):
     """
     Get site configuration from database.
-    
+
     Args:
         site_id: Site ID to fetch configuration for
-    
+
     Returns:
         dict: Site configuration or None if not found
     """
     logger = system.util.getLogger("orbit.database")
     logger.debug("Querying site config for site_id={}".format(site_id))
-    
+
     try:
         result = system.db.runNamedQuery(
-            "GetSiteConfig", 
+            "GetSiteConfig",
             {"site_id": site_id}
         )
-        
+
         if result and result.getRowCount() > 0:
             # Convert PyDataset row to dictionary
             config = {}
@@ -1622,6 +1644,7 @@ def get_site_config(site_id=1):
 **Location:** Designer > Project Browser > Scripting > Gateway Events > Timer Scripts  
 **Script Name:** `RunsPolling`  
 **Settings:**
+
 - **Delay:** 60000 (milliseconds) - 60 seconds polling interval
 - **Delay Type:** Fixed Rate
 - **Enabled:** ✓
@@ -1637,7 +1660,7 @@ Schedule: Fixed Rate, 60000ms (60 seconds)
 
 Purpose (v2.8): Primary data collection - polls Orbit API, detects changes,
                 triggers DB updates, tag writes, and notifications.
-                
+
 This polling-based approach provides the same functionality as webhooks
 without requiring the Web Dev module (no additional license cost).
 
@@ -1651,6 +1674,7 @@ runs_polling.poll_recent_runs()
 ```
 
 **Testing:** Before enabling the timer, test in Script Console:
+
 ```python
 # Open: Designer > Tools > Script Console
 runs_polling.poll_recent_runs()
@@ -1678,16 +1702,16 @@ Purpose: Initialize robot configuration tags on gateway startup.
 def initialize():
     logger = system.util.getLogger("orbit.startup")
     logger.info("Starting Orbit integration initialization...")
-    
+
     try:
         # Sync robot configuration from Orbit
         runs_polling.sync_robot_config()
         logger.info("Robot configuration synced successfully")
-        
+
         # Initial poll of recent runs to populate mission tags
         runs_polling.poll_recent_runs()
         logger.info("Initial runs poll completed")
-        
+
     except Exception as e:
         logger.error("Initialization failed: {}".format(str(e)))
 
@@ -1716,61 +1740,76 @@ v2.8: Renamed from webhook_handlers. Called by runs_polling when status changes.
 def handle_run_event(payload):
     """
     Process run (mission) events from polling or webhook.
-    
+
     Args:
         payload: Event payload dictionary with format:
                  {"type": "run.started|completed|failed", "data": {...}}
     """
     logger = system.util.getLogger("orbit.run_event")
-    
+
     run_data = payload["data"] if "data" in payload else {}
     run_uuid = run_data["uuid"] if "uuid" in run_data else ""
     mission_name = run_data["missionName"] if "missionName" in run_data else ""
     status = run_data["status"] if "status" in run_data else ""  # started, completed, failed
     robot_data = run_data["robot"] if "robot" in run_data else {}
     robot_hostname = robot_data["hostname"] if "hostname" in robot_data else ""
-    
+
     # v2.13: Extract actual timestamps from Orbit API for accurate DB records
     start_time = run_data["startTime"] if "startTime" in run_data else None  # ISO timestamp
     end_time = run_data["endTime"] if "endTime" in run_data else None        # ISO timestamp (null if running)
-    
+
     logger.info("Processing run event: uuid={}, mission={}, status={}, robot={}".format(
         run_uuid, mission_name, status, robot_hostname))
-    
+
     # Map Orbit status to our codes
-    # Note: Orbit API returns "success" for completed runs, not "completed"
+    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
+    # OpenAPI spec doesn't document possible missionStatus values
+    # See: orbit-api-documents-md/api/actual-responses.md to document real values
     status_map = {
-        "started": "RUN",
-        "completed": "COMP",
-        "success": "COMP",   # Orbit API uses "success" for completed runs
-        "failed": "FAIL",
-        "pending": "PEND"
+        "started": "RUN",       # ASSUMED - verify with real API
+        "completed": "COMP",    # ASSUMED - might be wrong, could be "success"
+        "success": "COMP",      # ASSUMED - common pattern but unverified
+        "failed": "FAIL",       # ASSUMED - verify with real API
+        "pending": "PEND",      # ASSUMED - verify with real API
+        "running": "RUN",       # ASSUMED - verify with real API
+        "error": "FAIL",        # ASSUMED - verify with real API
+        "aborted": "FAIL",      # ASSUMED - verify with real API
+        "cancelled": "FAIL"     # ASSUMED - verify with real API
     }
     mission_status_code = status_map.get(status, "PEND")
-    
+
+    # Defensive: Log ALL status values to discover actual API responses
+    logger.info("Processing status='{}' -> mission_status_code='{}'".format(
+        status, mission_status_code))
+
     if status not in status_map:
-        logger.warn("Unknown status '{}' for run {}, defaulting to PEND".format(status, run_uuid))
-    
+        logger.warn("UNKNOWN status '{}' for run {} - defaulting to PEND. VERIFY ACTUAL API!".format(
+            status, run_uuid))
+
     # 1. Upsert to database using Named Query (with actual timestamps)
     _upsert_run(run_uuid, mission_name, mission_status_code, robot_hostname, start_time, end_time)
-    
+
     # 2. Update mission tags
     _update_mission_tags(robot_hostname, run_uuid, mission_name, mission_status_code)
-    
+
     # 3. Evaluate notification rules
-    # Note: Orbit API returns "success" for completed runs, not "completed"
+    # ⚠️ WARNING: ALL VALUES BELOW ARE UNVERIFIED ASSUMPTIONS
     trigger_type_map = {
-        "started": "RUN_START",
-        "completed": "RUN_COMP",
-        "success": "RUN_COMP",  # Orbit API uses "success" for completed runs
-        "failed": "RUN_FAIL",
+        "started": "RUN_START",     # ASSUMED - verify with real API
+        "running": "RUN_START",     # ASSUMED - verify with real API
+        "completed": "RUN_COMP",    # ASSUMED - might be wrong
+        "success": "RUN_COMP",      # ASSUMED - common but unverified
+        "failed": "RUN_FAIL",       # ASSUMED - verify with real API
+        "error": "RUN_FAIL",        # ASSUMED - verify with real API
+        "aborted": "RUN_FAIL",      # ASSUMED - verify with real API
+        "cancelled": "RUN_FAIL"     # ASSUMED - verify with real API
     }
     trigger_type = trigger_type_map.get(status, None)
     if trigger_type is None:
-        logger.warn("Unhandled run status for trigger mapping: {}".format(status))
+        logger.warn("UNKNOWN status for trigger mapping: '{}' - skipping notification. Update trigger_type_map!".format(status))
         return
     notification_engine.evaluate_and_send(trigger_type, run_uuid, mission_name, mission_status_code, robot_hostname)
-    
+
     logger.info("Processed run event: {} - {}".format(mission_name, mission_status_code))
 
 
@@ -1778,10 +1817,10 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=
     """
     Insert or update run in database using Named Query.
     Uses atomic MERGE operation for thread safety.
-    
+
     v2.13: Now accepts start_time and end_time from Orbit API for accurate timestamps.
            Falls back to server time (SYSUTCDATETIME) if API timestamps are null.
-    
+
     Args:
         run_uuid: Orbit run UUID
         mission_name: Mission name
@@ -1791,11 +1830,11 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=
         end_time: ISO timestamp string from Orbit API (optional, null if running)
     """
     logger = system.util.getLogger("orbit.run_event.db")
-    
+
     try:
         logger.debug("Upserting run: uuid={}, mission={}, status={}, robot={}, start={}, end={}".format(
             run_uuid, mission_name, status_code, robot_hostname, start_time, end_time))
-        
+
         # Use Named Query for secure, maintainable database access
         # v2.13: Pass actual timestamps from Orbit API
         rows_affected = system.db.runNamedQuery(
@@ -1809,7 +1848,7 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=
                 "end_time": end_time         # ISO string or None
             }
         )
-        
+
         logger.info("Upserted run {} successfully: {} rows affected".format(run_uuid, rows_affected))
     except Exception as e:
         logger.error("Failed to upsert run {}: {}".format(run_uuid, str(e)))
@@ -1818,35 +1857,35 @@ def _upsert_run(run_uuid, mission_name, status_code, robot_hostname, start_time=
 def _update_mission_tags(robot_hostname, run_uuid, mission_name, status_code):
     """Update mission-related tags for the robot."""
     logger = system.util.getLogger("orbit.run_event.tags")
-    
+
     logger.debug("Updating mission tags for robot={}, run={}, status={}".format(
         robot_hostname, run_uuid, status_code))
-    
+
     # Get tag base path using helper (supports both demo and production modes)
     tag_base = helpers.get_robot_tag_base(robot_hostname)
     if not tag_base:
         logger.error("Cannot update tags: tag path not found for robot {}".format(robot_hostname))
         return
-    
+
     tags = [
         "{}/MissionId".format(tag_base),
         "{}/MissionName".format(tag_base),
         "{}/MissionStatusCode".format(tag_base),
         "{}/LastRunAtUtc".format(tag_base),
     ]
-    
+
     values = [run_uuid, mission_name, status_code, system.date.now()]
-    
+
     logger.debug("Writing {} tag(s) to tag base: {}".format(len(tags), tag_base))
     results = system.tag.writeBlocking(tags, values)
-    
+
     # Check for write errors
     errors = 0
     for i, result in enumerate(results):
         if not result.isGood():
             logger.error("Failed to write {}: {}".format(tags[i], result.getName()))
             errors += 1
-    
+
     if errors == 0:
         logger.info("Successfully updated {} tag(s) for robot {}".format(len(tags), robot_hostname))
     else:
@@ -1887,18 +1926,18 @@ TEST_MODE = True  # Change to False when SMTP is ready
 def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_hostname):
     """
     Evaluate notification rules and send matching emails.
-    
+
     Current Implementation: Phase 2 (All Rules)
     - Loops through all matching rules
     - Each matching rule sends a separate notification
     - Different teams can receive different messages
-    
+
     To switch to Phase 1 (Simple):
       Change: for rule in rules:
       To:     if rules and len(rules) > 0:
               rule = rules[0]  # Use only highest priority rule
               ... process single rule ...
-    
+
     Args:
         trigger_type: Event type (RUN_START, RUN_COMP, RUN_FAIL)
         run_uuid: Orbit run UUID
@@ -1909,7 +1948,7 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
     logger = system.util.getLogger("orbit.notification")
     logger.info("Evaluating notifications: trigger={}, run={}, mission={}, status={}".format(
         trigger_type, run_uuid, mission_name, status_code))
-    
+
     # Optional but recommended: enrich templates with DB-backed context (times, duration, nickname, tag path).
     # This avoids relying on placeholders that aren't available in the webhook payload.
     ctx = None
@@ -1927,7 +1966,7 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
             logger.warn("No notification context found for run={}".format(run_uuid))
     except Exception as e:
         logger.error("GetRunNotificationContext failed for {}: {}".format(run_uuid, str(e)))
-    
+
     battery_level = None
     try:
         tag_base_path = (ctx or {}).get("TagBasePath")
@@ -1935,7 +1974,7 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
             battery_level = system.tag.readBlocking(["{}/BatteryLevel".format(tag_base_path)])[0].value
     except Exception as e:
         logger.warn("BatteryLevel read failed for {}: {}".format(run_uuid, str(e)))
-    
+
     # Get matching rules using Named Query
     # Returns all matching rules ordered by Priority ASC (highest priority first)
     logger.debug("Querying notification rules: trigger={}, status={}".format(trigger_type, status_code))
@@ -1943,53 +1982,53 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
         "GetNotificationRules",
         {"trigger_type_code": trigger_type, "status_code": status_code}
     )
-    
+
     if not rules or rules.getRowCount() == 0:
         logger.info("No notification rules found for trigger={}, status={}".format(trigger_type, status_code))
         return
-    
+
     logger.info("Found {} notification rule(s) for trigger={}, status={}".format(
         rules.getRowCount(), trigger_type, status_code))
-    
+
     # Phase 2: Process ALL matching rules
     # For Phase 1 (simple): Replace loop with: if rules and len(rules) > 0: rule = rules[0]
     for rule in rules:
         rule_id = rule["NotificationRuleId"]
         pattern = rule["MissionNamePattern"]
         rule_name = rule["RuleName"] if "RuleName" in rule else "Rule #{}".format(rule_id)
-        
+
         logger.debug("Processing rule: {} (id={})".format(rule_name, rule_id))
-        
+
         # Check mission name pattern match
         if pattern and pattern.replace("%", "") not in mission_name:
             logger.debug("Rule {} skipped - mission name '{}' doesn't match pattern '{}'".format(
                 rule_id, mission_name, pattern))
             continue
-        
+
         # Get recipients
         logger.debug("Querying recipients for rule_id={}".format(rule_id))
         recipients = system.db.runNamedQuery(
             "GetNotificationRecipients",
             {"rule_id": rule_id}
         )
-        
+
         if not recipients or recipients.getRowCount() == 0:
             logger.warn("Rule {} has no recipients, skipping".format(rule_id))
             continue
-        
+
         logger.debug("Rule {} has {} recipient(s)".format(rule_id, recipients.getRowCount()))
-        
+
         # Build recipient lists
         to_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "to"]
         cc_list = [r["Email"] for r in recipients if r["RecipientTypeCode"] == "cc"]
-        
+
         if not to_list:
             logger.warn("Rule {} has no TO recipients, skipping".format(rule_id))
             continue
-        
+
         logger.info("Rule {} matched - sending to {} recipient(s) (TO: {}, CC: {})".format(
             rule_id, len(to_list) + len(cc_list), len(to_list), len(cc_list)))
-        
+
         # Render templates
         template_vars = {
             "TriggerTypeCode": trigger_type,
@@ -2007,10 +2046,10 @@ def evaluate_and_send(trigger_type, run_uuid, mission_name, status_code, robot_h
             "LastSeenAtUtc": (ctx or {}).get("LastSeenAtUtc"),
             "LastSeenUtc": (ctx or {}).get("LastSeenAtUtc")
         }
-        
+
         subject = _render_template(rule["EmailSubjectTemplate"], template_vars)
         body = _render_template(rule["EmailBodyTemplate"], template_vars)
-        
+
         # Send email
         _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body)
 
@@ -2028,17 +2067,17 @@ def _render_template(template, variables):
 def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body):
     """Send email and log the notification attempt."""
     logger = system.util.getLogger("orbit.notification.send")
-    
+
     # Check TEST_MODE flag
     if TEST_MODE:
         logger.info("[TEST MODE] Notification evaluated - TO: {} | SUBJECT: {}".format(to_list, subject))
         logger.info("[TEST MODE] Email not sent (TEST_MODE=True)")
         _log_notification(
-            rule_id, run_uuid, trigger_type, to_list + cc_list, 
+            rule_id, run_uuid, trigger_type, to_list + cc_list,
             subject, body, True, "TEST_MODE: Email not sent"
         )
         return
-    
+
     try:
         # Prefer config-driven SMTP and fromAddr (database, project properties, etc.).
         # For the demo, fallback to placeholders if not configured.
@@ -2047,10 +2086,10 @@ def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, bo
             site_config = helpers.get_site_config(site_id=1)
         except:
             site_config = None
-        
+
         smtp_host = (site_config or {}).get("SmtpHost") or "smtp.company.com"
         from_addr = (site_config or {}).get("FromAddr") or "ignition@company.com"
-        
+
         system.net.sendEmail(
             smtp=smtp_host,
             fromAddr=from_addr,
@@ -2059,10 +2098,10 @@ def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, bo
             subject=subject,
             body=body
         )
-        
+
         _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, True, None)
         logger.info("Sent notification: {}".format(subject))
-        
+
     except Exception as e:
         _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, False, str(e))
         logger.error("Failed to send notification: {}".format(str(e)))
@@ -2098,11 +2137,11 @@ def _log_notification(rule_id, run_uuid, trigger_type, recipients, subject, body
 
 **When to Use Each Approach:**
 
-| Phase | When To Use | Complexity | Flexibility |
-|-------|-------------|------------|-------------|
-| **Phase 1: Simple** | 1-5 robots, small team, everyone sees same alerts | ⭐ Low | ⭐ Limited |
-| **Phase 2: Multi-Team** | 10+ robots, multiple teams need different alerts | ⭐⭐ Medium | ⭐⭐⭐ Good |
-| **Phase 3: Enterprise** | Multi-site, complex routing, integrations | ⭐⭐⭐ High | ⭐⭐⭐⭐⭐ Maximum |
+| Phase                   | When To Use                                       | Complexity  | Flexibility        |
+| ----------------------- | ------------------------------------------------- | ----------- | ------------------ |
+| **Phase 1: Simple**     | 1-5 robots, small team, everyone sees same alerts | ⭐ Low      | ⭐ Limited         |
+| **Phase 2: Multi-Team** | 10+ robots, multiple teams need different alerts  | ⭐⭐ Medium | ⭐⭐⭐ Good        |
+| **Phase 3: Enterprise** | Multi-site, complex routing, integrations         | ⭐⭐⭐ High | ⭐⭐⭐⭐⭐ Maximum |
 
 **Phase 1 Example (Simplified):**
 
@@ -2133,6 +2172,7 @@ recipients = system.db.runNamedQuery("GetNotificationRecipients", {"rule_id": ru
 When scaling to enterprise needs, consider adding:
 
 1. **Deduplication by recipient:**
+
 ```python
 # Track which recipients already received a notification
 recipient_to_rule = {}  # email -> highest priority rule
@@ -2149,6 +2189,7 @@ for email, (rule, recipient) in recipient_to_rule.items():
 ```
 
 2. **Multi-channel routing:**
+
 ```python
 # Support different notification channels
 if rule["ChannelType"] == "email":
@@ -2160,6 +2201,7 @@ elif rule["ChannelType"] == "webhook":
 ```
 
 3. **Site-specific filtering:**
+
 ```python
 # Add site_id parameter to GetNotificationRules query:
 rules = system.db.runNamedQuery(
@@ -2181,12 +2223,14 @@ After implementing the run event handlers, test the integration to ensure everyt
 **Testing Strategy:**
 
 The implementation includes a `TEST_MODE` flag in the `notification_engine` module that allows you to:
+
 - ✅ Test event processing, database updates, and tag writes
 - ✅ Verify notification logic without SMTP configuration
-- ✅ See what emails *would* be sent in gateway logs
+- ✅ See what emails _would_ be sent in gateway logs
 - ✅ Avoid SMTP errors blocking your development workflow
 
 **Quick Start:**
+
 1. Set `TEST_MODE = True` in `notification_engine` module (default)
 2. Run Script Console tests below
 3. Verify database and tag updates
@@ -2195,6 +2239,7 @@ The implementation includes a `TEST_MODE` flag in the `notification_engine` modu
 #### 6.11.1 Test Preparation
 
 Before testing, ensure:
+
 - ✅ Database tables are created with sample data
 - ✅ Tag provider has demo robot structure (`[default]Demo/Robots/spot-demo-01/`)
 - ✅ Project Library modules (`run_event_handlers`, `runs_polling`, `notification_engine`, `helpers`) exist
@@ -2218,13 +2263,13 @@ Then modify the `_send_and_log` function to check this flag:
 def _send_and_log(rule_id, run_uuid, trigger_type, to_list, cc_list, subject, body):
     """Send email and log the notification attempt."""
     logger = system.util.getLogger("orbit.notification.send")
-    
+
     # Check test mode
     if TEST_MODE:
         logger.info("[TEST MODE] Would send notification to {}: {}".format(to_list, subject))
         _log_notification(rule_id, run_uuid, trigger_type, to_list + cc_list, subject, body, True, "Test mode - not sent")
         return
-    
+
     try:
         # ... rest of existing code ...
 ```
@@ -2238,6 +2283,7 @@ This allows you to test the entire event flow (database updates, tag writes, not
 This method tests the handler logic directly - the same code path that polling uses.
 
 **Prerequisites:**
+
 - Ensure `TEST_MODE = True` is set in the `notification_engine` module if SMTP is not configured
 - This will test database updates, tag writes, and notification logic without sending actual emails
 
@@ -2300,7 +2346,7 @@ print "\n[4/6] Testing run_event_handlers module..."
 try:
     import run_event_handlers
     print "    OK: run_event_handlers module imported"
-    
+
     # Check if handle_run_event function exists
     if hasattr(run_event_handlers, 'handle_run_event'):
         print "    OK: handle_run_event() function found"
@@ -2315,7 +2361,7 @@ print "\n[5/6] Testing notification_engine module..."
 try:
     import notification_engine
     print "    OK: notification_engine module imported"
-    
+
     # Check TEST_MODE setting
     if hasattr(notification_engine, 'TEST_MODE'):
         test_mode = notification_engine.TEST_MODE
@@ -2324,7 +2370,7 @@ try:
             print "    WARNING: TEST_MODE is False - emails will be sent!"
     else:
         print "    WARNING: TEST_MODE not found in module"
-        
+
     # Check if evaluate_and_send function exists
     if hasattr(notification_engine, 'evaluate_and_send'):
         print "    OK: evaluate_and_send() function found"
@@ -2396,7 +2442,7 @@ except Exception as e:
     print "ERROR: {}".format(str(e))
 
 # Test Case 2: Mission Completed Event
-# Note: Orbit API returns "success" for completed runs, not "completed"
+# ⚠️ NOTE: Actual status value is UNKNOWN - testing "success" (unverified assumption)
 print "\n" + "=" * 60
 print "TEST 2: Mission Completed Event"
 print "=" * 60
@@ -2406,7 +2452,7 @@ test_payload_completed = {
     "data": {
         "uuid": "test-run-001",  # Same UUID to test update
         "missionName": "Daily Inspection",
-        "status": "success",  # Orbit API uses "success", not "completed"
+        "status": "success",  # ASSUMPTION - could also be "completed" - VERIFY WITH REAL API
         "startTime": "2026-02-04T10:30:00.000Z",  # v2.13: Actual start time from Orbit API
         "endTime": "2026-02-04T10:45:30.000Z",    # v2.13: Actual end time (15.5 min duration)
         "robot": {"hostname": "spot-demo-01"},
@@ -2458,6 +2504,7 @@ After running the test, verify the following:
    - No SMTP-related errors should appear
 
 2. **Gateway Logs** (Status > Diagnostics > Logs):
+
    ```
    Filter by: orbit.notification
    Expected log entries:
@@ -2470,15 +2517,16 @@ After running the test, verify the following:
    ```
 
 3. **Database Verification:**
+
    ```sql
    -- Check runs table was updated
    SELECT * FROM orbit_runs WHERE run_uuid IN ('test-run-001', 'test-run-002');
-   
+
    -- Check notification history was logged
-   SELECT * FROM orbit_notification_history 
+   SELECT * FROM orbit_notification_history
    WHERE run_uuid IN ('test-run-001', 'test-run-002')
    ORDER BY created_at_utc DESC;
-   
+
    -- You should see error_message = 'TEST_MODE: Email not sent'
    ```
 
@@ -2494,6 +2542,7 @@ After running the test, verify the following:
 **When to Disable TEST_MODE:**
 
 Once SMTP is configured (see Section X for SMTP setup), disable test mode:
+
 1. Open `notification_engine` module
 2. Change `TEST_MODE = False`
 3. Re-run tests - emails should now be sent
@@ -2504,6 +2553,7 @@ Once SMTP is configured (see Section X for SMTP setup), disable test mode:
 Test the full polling flow by calling `poll_recent_runs()` directly.
 
 **In Script Console:**
+
 ```python
 """
 Test the full polling integration.
@@ -2525,6 +2575,7 @@ print "\nCheck Gateway logs for: orbit.runs_polling"
 ```
 
 **What to verify:**
+
 - Check Gateway logs for `orbit.runs_polling` messages
 - Verify tags update in Tag Browser
 - Check database for any new/updated run records
@@ -2548,28 +2599,28 @@ Purpose: Testing utilities for run event processing (v2.8)
 def send_test_event(event_type, run_uuid=None, mission_name="Test Mission", robot_hostname="spot-demo-01"):
     """
     Send a test run event to handlers.
-    
+
     Args:
         event_type: "run.started", "run.completed", or "run.failed"
         run_uuid: Optional UUID (generates one if not provided)
         mission_name: Mission name for test
         robot_hostname: Robot hostname for test
-    
+
     Returns:
         dict: Test results with success/error information
     """
     import uuid
     logger = system.util.getLogger("orbit.run_event.test")
-    
+
     if not run_uuid:
         run_uuid = "test-" + str(uuid.uuid4())[:8]
-    
+
     status_map = {
         "run.started": "started",
         "run.completed": "completed",
         "run.failed": "failed"
     }
-    
+
     payload = {
         "type": event_type,
         "data": {
@@ -2581,7 +2632,7 @@ def send_test_event(event_type, run_uuid=None, mission_name="Test Mission", robo
             }
         }
     }
-    
+
     try:
         run_event_handlers.handle_run_event(payload)
         logger.info("Test event sent: {} - {}".format(event_type, run_uuid))
@@ -2604,10 +2655,10 @@ def send_test_event(event_type, run_uuid=None, mission_name="Test Mission", robo
 def verify_test_results(run_uuid):
     """
     Verify test run event results in database and tags.
-    
+
     Args:
         run_uuid: UUID of test run to verify
-    
+
     Returns:
         dict: Verification results
     """
@@ -2619,7 +2670,7 @@ def verify_test_results(run_uuid):
         "notification_check": False,
         "errors": []
     }
-    
+
     # Check 1: Database record
     try:
         ds = system.db.runPrepQuery(
@@ -2639,7 +2690,7 @@ def verify_test_results(run_uuid):
             results["errors"].append("Run not found in database")
     except Exception as e:
         results["errors"].append("Database check failed: {}".format(str(e)))
-    
+
     # Check 2: Tag updates
     try:
         tag_path = "[default]Demo/Robots/spot-demo-01/MissionId"
@@ -2652,7 +2703,7 @@ def verify_test_results(run_uuid):
             ))
     except Exception as e:
         results["errors"].append("Tag check failed: {}".format(str(e)))
-    
+
     # Check 3: Notification history
     try:
         ds = system.db.runPrepQuery(
@@ -2670,13 +2721,13 @@ def verify_test_results(run_uuid):
             results["notifications_sent"] = 0
     except Exception as e:
         results["errors"].append("Notification check failed: {}".format(str(e)))
-    
+
     results["overall_success"] = (
-        results["database_check"] and 
-        results["tags_check"] and 
+        results["database_check"] and
+        results["tags_check"] and
         len(results["errors"]) == 0
     )
-    
+
     return results
 
 
@@ -2687,25 +2738,25 @@ def run_full_test_suite():
     """
     logger = system.util.getLogger("orbit.run_event.test")
     logger.info("Starting full run event test suite...")
-    
+
     results = {
         "timestamp": system.date.now(),
         "tests": []
     }
-    
+
     test_cases = [
         ("run.started", "Full Test - Started"),
         ("run.completed", "Full Test - Completed"),
         ("run.failed", "Full Test - Failed")
     ]
-    
+
     for event_type, mission_name in test_cases:
         # Send test event
         send_result = send_test_event(event_type, mission_name=mission_name)
-        
+
         # Wait for processing
         system.util.sleep(1000)
-        
+
         # Verify results
         if send_result["success"]:
             verify_result = verify_test_results(send_result["run_uuid"])
@@ -2720,12 +2771,12 @@ def run_full_test_suite():
                 "send_result": send_result,
                 "verify_result": None
             })
-    
+
     logger.info("Test suite completed. Success: {}/{}".format(
         sum(1 for t in results["tests"] if t.get("verify_result", {}).get("overall_success")),
         len(results["tests"])
     ))
-    
+
     return results
 ```
 
@@ -2752,6 +2803,7 @@ After running tests, verify the following:
 **✅ Gateway Logs** (Gateway > Status > Diagnostics > Logs)
 
 Filter logs by these logger names:
+
 - `orbit.runs_polling` - Polling and change detection
 - `orbit.run_event` - Run event processing
 - `orbit.run_event.db` - Database operations
@@ -2760,6 +2812,7 @@ Filter logs by these logger names:
 - `orbit.notification.send` - Email sending
 
 Expected log entries:
+
 ```
 INFO [orbit.runs_polling] Processed 2 run status changes
 INFO [orbit.run_event.db] Upserted run test-run-001: 1 rows affected
@@ -2773,12 +2826,12 @@ Run queries in Database Query Browser:
 
 ```sql
 -- Check run was inserted/updated
-SELECT * FROM RoboticsRuns 
+SELECT * FROM RoboticsRuns
 WHERE OrbitRunUuid = 'test-run-001'
 ORDER BY CreatedAtUtc DESC;
 
 -- Check notification history
-SELECT nh.* 
+SELECT nh.*
 FROM RoboticsNotificationHistories nh
 INNER JOIN RoboticsRuns r ON nh.RunId = r.RunId
 WHERE r.OrbitRunUuid = 'test-run-001'
@@ -2793,6 +2846,7 @@ GROUP BY MissionStatusCode;
 **✅ Tag Verification** (Designer > Tag Browser)
 
 Navigate to `[default]Demo/Robots/spot-demo-01/` and verify:
+
 - `MissionId` = test run UUID
 - `MissionName` = test mission name
 - `MissionStatusCode` = appropriate code (RUN/COMP/FAIL)
@@ -2801,21 +2855,22 @@ Navigate to `[default]Demo/Robots/spot-demo-01/` and verify:
 **✅ Email Verification**
 
 If notification rules are configured:
+
 1. Check your email inbox for test notifications
 2. Verify `NotificationHistory` table has entries with `IsSent = 1`
 3. Check email subject and body contain correct template variables
 
 #### 6.11.6 Common Issues and Troubleshooting
 
-| Issue | Possible Cause | Solution |
-|-------|---------------|----------|
-| `NameError: run_event_handlers` | Module not created | Create Project Library module `run_event_handlers` |
-| `NameError: runs_polling` | Module not created | Create Project Library module `runs_polling` |
-| Database write fails | Named Query missing | Verify `UpsertRun` Named Query exists |
-| Tag write fails | Tag path doesn't exist | Create demo robot tag structure or update `get_robot_tag_base()` |
-| No notification sent | No matching rules | Add test rule in `NotificationRule` table |
-| Polling shows no changes | No new runs in Orbit | Check Orbit API has recent run data |
-| API returns empty | Network or auth issue | Check `orbit_api` config and network access |
+| Issue                           | Possible Cause         | Solution                                                         |
+| ------------------------------- | ---------------------- | ---------------------------------------------------------------- |
+| `NameError: run_event_handlers` | Module not created     | Create Project Library module `run_event_handlers`               |
+| `NameError: runs_polling`       | Module not created     | Create Project Library module `runs_polling`                     |
+| Database write fails            | Named Query missing    | Verify `UpsertRun` Named Query exists                            |
+| Tag write fails                 | Tag path doesn't exist | Create demo robot tag structure or update `get_robot_tag_base()` |
+| No notification sent            | No matching rules      | Add test rule in `NotificationRule` table                        |
+| Polling shows no changes        | No new runs in Orbit   | Check Orbit API has recent run data                              |
+| API returns empty               | Network or auth issue  | Check `orbit_api` config and network access                      |
 
 #### 6.11.7 Performance Testing
 
@@ -2832,7 +2887,7 @@ def performance_test(num_events=10):
     """Process multiple events rapidly to test performance."""
     start_time = time.time()
     results = []
-    
+
     for i in range(num_events):
         result = run_event_test_utils.send_test_event(
             "run.completed",
@@ -2840,20 +2895,20 @@ def performance_test(num_events=10):
             mission_name="Performance Test {}".format(i)
         )
         results.append(result)
-        
+
         # Small delay to prevent overwhelming the system
         system.util.sleep(100)
-    
+
     elapsed = time.time() - start_time
     success_count = sum(1 for r in results if r["success"])
-    
+
     print "Performance Test Results:"
     print "  Events: {}".format(num_events)
     print "  Successful: {}".format(success_count)
     print "  Failed: {}".format(num_events - success_count)
     print "  Total Time: {:.2f}s".format(elapsed)
     print "  Avg Time: {:.2f}ms".format((elapsed / num_events) * 1000)
-    
+
     return results
 
 # Run performance test
@@ -2868,11 +2923,11 @@ performance_test(20)
 
 #### Parameter Best Practices
 
-| Parameter Type | When to Use | Security |
-|---------------|-------------|----------|
-| **Value Parameter** (`:paramName`) | WHERE clause values, INSERT/UPDATE values | ✅ Safe - Prevents SQL injection |
-| **QueryString Parameter** (`{paramName}`) | Column names, table names (rare) | ⚠️ Unsafe - Never use with user input |
-| **Database Parameter** | Multi-database connections | ✅ Safe |
+| Parameter Type                            | When to Use                               | Security                              |
+| ----------------------------------------- | ----------------------------------------- | ------------------------------------- |
+| **Value Parameter** (`:paramName`)        | WHERE clause values, INSERT/UPDATE values | ✅ Safe - Prevents SQL injection      |
+| **QueryString Parameter** (`{paramName}`) | Column names, table names (rare)          | ⚠️ Unsafe - Never use with user input |
+| **Database Parameter**                    | Multi-database connections                | ✅ Safe                               |
 
 **Important:** Always use **Value Parameters** (`:paramName`) for user-provided values. They act like prepared statements and prevent SQL injection.
 
@@ -2882,10 +2937,10 @@ performance_test(20)
 
 **Two approaches to handle defaults:**
 
-| Approach | Where | When to Use | Example |
-|----------|-------|-------------|---------|
-| **Calling Code** | Python script | Simple defaults, flexibility needed | `params = {"site_id": site_id or 1}` |
-| **SQL COALESCE** | In the query | Database-level guarantee, NULL handling | `WHERE r.SiteId = COALESCE(:site_id, 1)` |
+| Approach         | Where         | When to Use                             | Example                                  |
+| ---------------- | ------------- | --------------------------------------- | ---------------------------------------- |
+| **Calling Code** | Python script | Simple defaults, flexibility needed     | `params = {"site_id": site_id or 1}`     |
+| **SQL COALESCE** | In the query  | Database-level guarantee, NULL handling | `WHERE r.SiteId = COALESCE(:site_id, 1)` |
 
 **Recommended Pattern:** Apply defaults in calling code for clarity and flexibility:
 
@@ -2893,7 +2948,7 @@ performance_test(20)
 # Helper function with documented defaults
 def get_all_robots(site_id=1):
     """Get all active robots for a site.
-    
+
     Args:
         site_id: Site ID (default: 1)
     """
@@ -2907,18 +2962,18 @@ def get_all_robots(site_id=1):
 
 #### Named Query List
 
-| Query Name | Type | Description | Parameters |
-|------------|------|-------------|------------|
-| `GetAllRobots` | Query | Get all active robots | `:site_id` (Int) |
-| `GetMissionHistory` | Query | Get mission history with filters | `:site_id`, `:start_date`, `:end_date`, `:limit` |
-| `GetNotificationRules` | Query | Get active notification rules (returns ALL matching, ordered by priority) | `:trigger_type_code`, `:status_code` |
-| `GetNotificationRecipients` | Query | Get recipients for a rule | `:rule_id` (Int) |
-| `GetRunNotificationContext` | Query | Data used for notification templates | `:run_uuid` (String) |
-| `UpsertRun` | Update | Insert or update run record | `:run_uuid`, `:mission_name`, `:status_code`, `:robot_hostname` |
-| `GetRobotByHostname` | Query | Find robot by hostname | `:hostname` |
-| `GetRobotTagPath` | Query | Get robot's tag base path (for production/multi-site) | `:hostname` |
-| `GetSiteConfig` | Query | Get site configuration (SMTP, Orbit URL, etc.) | `:site_id` (Int) |
-| `InsertNotificationHistory` | Update | Log sent notification | `:rule_id`, `:run_uuid`, `:trigger_type_code`, `:subject`, `:is_sent`, etc. |
+| Query Name                  | Type   | Description                                                               | Parameters                                                                  |
+| --------------------------- | ------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GetAllRobots`              | Query  | Get all active robots                                                     | `:site_id` (Int)                                                            |
+| `GetMissionHistory`         | Query  | Get mission history with filters                                          | `:site_id`, `:start_date`, `:end_date`, `:limit`                            |
+| `GetNotificationRules`      | Query  | Get active notification rules (returns ALL matching, ordered by priority) | `:trigger_type_code`, `:status_code`                                        |
+| `GetNotificationRecipients` | Query  | Get recipients for a rule                                                 | `:rule_id` (Int)                                                            |
+| `GetRunNotificationContext` | Query  | Data used for notification templates                                      | `:run_uuid` (String)                                                        |
+| `UpsertRun`                 | Update | Insert or update run record                                               | `:run_uuid`, `:mission_name`, `:status_code`, `:robot_hostname`             |
+| `GetRobotByHostname`        | Query  | Find robot by hostname                                                    | `:hostname`                                                                 |
+| `GetRobotTagPath`           | Query  | Get robot's tag base path (for production/multi-site)                     | `:hostname`                                                                 |
+| `GetSiteConfig`             | Query  | Get site configuration (SMTP, Orbit URL, etc.)                            | `:site_id` (Int)                                                            |
+| `InsertNotificationHistory` | Update | Log sent notification                                                     | `:rule_id`, `:run_uuid`, `:trigger_type_code`, `:subject`, `:is_sent`, etc. |
 
 #### GetAllRobots
 
@@ -3087,12 +3142,14 @@ This query intentionally returns **all matching rules** (no `TOP 1` limit) to en
   - Complex escalation workflows
 
 **Why not use `TOP 1` in SQL?**
+
 - Changing notification behavior only requires Python code updates (easy)
 - No database schema or query changes needed when scaling (hard)
 - Query stays flexible for future requirements
 - Ordered by Priority ASC ensures highest-priority rules come first
 
 **Filtering Logic:**
+
 - **`TriggerTypeCode`**: Exact match (e.g., `RUN_START`, `RUN_COMP`, `RUN_FAIL`)
 - **`StatusCodeFilter`**: `NULL` = match all statuses, or exact match required (e.g., `FAIL`, `COMP`)
   - Rules with `NULL` act as catch-all rules
@@ -3103,6 +3160,7 @@ This query intentionally returns **all matching rules** (no `TOP 1` limit) to en
   - Pattern like `%Patrol%` = match missions containing "Patrol"
 
 **Example:** For a failed patrol mission with status='FAIL':
+
 - Orbit sends: `status="FAIL"`, `mission="Patrol-North"`
 - Query returns multiple rules (ordered by priority):
   - Rule 7 (Priority=1): Specific patrol failures → `patrol-team@company.com`
@@ -3205,7 +3263,7 @@ VALUES
 -- Named Query: GetMissionHistory
 -- All parameters use Value Parameter syntax (:param) for SQL injection protection
 -- Note: Calling code must provide site_id and limit; use COALESCE for safety
-SELECT 
+SELECT
     r.RunId,
     r.MissionName,
     r.MissionStatusCode,
@@ -3248,7 +3306,7 @@ OFFSET 0 ROWS FETCH NEXT COALESCE(:limit, 100) ROWS ONLY
 -- v2.13: Uses actual timestamps from Orbit API for accurate duration calculations
 MERGE INTO RoboticsRuns AS target
 USING (
-    SELECT 
+    SELECT
         :run_uuid AS OrbitRunUuid,
         :mission_name AS MissionName,
         :status_code AS MissionStatusCode,
@@ -3262,29 +3320,29 @@ USING (
 ) AS source
 ON target.OrbitRunUuid = source.OrbitRunUuid
 WHEN MATCHED THEN
-    UPDATE SET 
+    UPDATE SET
         MissionStatusCode = source.MissionStatusCode,
         -- Use actual end time from Orbit API; fall back to server time only if API timestamp is null
-        CompletedAtUtc = CASE 
-            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') 
+        CompletedAtUtc = CASE
+            WHEN source.MissionStatusCode IN ('COMP', 'FAIL')
             THEN COALESCE(source.EndTime, SYSUTCDATETIME())
-            ELSE target.CompletedAtUtc 
+            ELSE target.CompletedAtUtc
         END
 WHEN NOT MATCHED THEN
     INSERT (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc)
     VALUES (
-        source.SiteId, 
-        source.RobotId, 
-        source.OrbitRunUuid, 
-        source.MissionName, 
+        source.SiteId,
+        source.RobotId,
+        source.OrbitRunUuid,
+        source.MissionName,
         source.MissionStatusCode,
         -- Use actual start time from Orbit API; fall back to server time only if API timestamp is null
         COALESCE(source.StartTime, SYSUTCDATETIME()),
         -- Only set CompletedAtUtc on INSERT if status is already COMP or FAIL
-        CASE 
-            WHEN source.MissionStatusCode IN ('COMP', 'FAIL') 
-            THEN source.EndTime 
-            ELSE NULL 
+        CASE
+            WHEN source.MissionStatusCode IN ('COMP', 'FAIL')
+            THEN source.EndTime
+            ELSE NULL
         END
     );
 ```
@@ -3327,13 +3385,13 @@ ORDER BY nr.NotificationRecipientId ASC;
 # Query example with defaults applied in calling code
 def get_mission_history(site_id=1, start_date=None, end_date=None, limit=100):
     """Get mission history with optional filters.
-    
+
     Args:
         site_id: Site ID (default: 1)
         start_date: Start datetime filter (default: None = no filter)
-        end_date: End datetime filter (default: None = no filter)  
+        end_date: End datetime filter (default: None = no filter)
         limit: Max rows to return (default: 100)
-    
+
     Returns:
         Dataset of mission history records
     """
@@ -3393,7 +3451,7 @@ flowchart TB
             TITLE[Site: Demo Factory]
             REFRESH[🔄 Last Update: 14:32:05]
         end
-        
+
         subgraph ROBOT_SECTION["Robot Status"]
             subgraph CARD1["Assembly Line Spot"]
                 C1_BAT[🔋 78%]
@@ -3402,7 +3460,7 @@ flowchart TB
             end
             NOTE1["(Display: Nickname | Tags: spot-BD-12345678)"]
         end
-        
+
         subgraph MISSION_TABLE["Recent Missions"]
             TABLE[Mission Name | Status | Robot | Started | Duration]
             ROW1[Inspection-A | ✅ Complete | Assembly Line Spot | 14:00 | 15 min]
@@ -3415,21 +3473,23 @@ flowchart TB
 ### 7.3 RobotCard Template
 
 **View Parameters:**
+
 - `tagBasePath` : String (e.g., `[default]Enterprise/Site001/Assembly/Line001/spot-BD-12345678`)
 - `robotName` : String (e.g., `Assembly Line Spot` - from Nickname field for display)
 
 **Bindings:**
 
-| Property | Binding Type | Path |
-|----------|--------------|------|
-| Battery Level | Tag | `{view.params.tagBasePath}/BatteryLevel` |
-| Is Connected | Tag | `{view.params.tagBasePath}/IsConnected` |
-| Mission Name | Tag | `{view.params.tagBasePath}/MissionName` |
-| Mission Status | Tag | `{view.params.tagBasePath}/MissionStatusCode` |
+| Property       | Binding Type | Path                                          |
+| -------------- | ------------ | --------------------------------------------- |
+| Battery Level  | Tag          | `{view.params.tagBasePath}/BatteryLevel`      |
+| Is Connected   | Tag          | `{view.params.tagBasePath}/IsConnected`       |
+| Mission Name   | Tag          | `{view.params.tagBasePath}/MissionName`       |
+| Mission Status | Tag          | `{view.params.tagBasePath}/MissionStatusCode` |
 
 ### 7.4 Mission History Page
 
 **Components:**
+
 1. **Filter Bar**: Date range picker, Status dropdown
 2. **Table**: Named Query binding to `GetMissionHistory`
 3. **Row Click**: Opens `MissionDetail` popup
@@ -3442,78 +3502,93 @@ This section documents all logger names used in the system and what they monitor
 
 ### 7.5.1 Logger Hierarchy
 
-| Logger Name | Module | Purpose | Key Events Logged |
-|-------------|--------|---------|-------------------|
-| `orbit.api.robots` | `orbit_api` | Orbit API - Robot configuration queries | API calls to `/api/v0/robots`, response validation, robot filtering |
-| `orbit.api.runs` | `orbit_api` | Orbit API - Mission runs queries | API calls to `/api/v0/runs`, parameter usage, response processing |
-| `orbit.api.anomalies` | `orbit_api` | Orbit API - Anomaly queries | API calls to `/api/v0/anomalies`, filtering, results |
-| `orbit.runs_polling` | `runs_polling` | Main polling loop | Poll start/completion, run counts, change detection summary |
-| `orbit.runs_polling.change_detection` | `runs_polling` | Status change detection | New runs detected, status changes (old → new), no changes |
-| `orbit.runs_polling.process` | `runs_polling` | Run event processing delegation | Event type mapping, payload building, delegation to handlers |
-| `orbit.runs_polling.tags` | `runs_polling` | Tag updates from polling | Tag path resolution, write operations, error details |
-| `orbit.run_event` | `run_event_handlers` | Run event handling | Event reception, status mapping, processing flow |
-| `orbit.run_event.db` | `run_event_handlers` | Database upsert operations | UpsertRun query execution, parameters, rows affected, errors |
-| `orbit.run_event.tags` | `run_event_handlers` | Tag updates from events | Tag path resolution, write operations, success/failure counts |
-| `orbit.notification` | `notification_engine` | Notification evaluation | Rule evaluation start, context retrieval, rule matching summary |
-| `orbit.notification.send` | `notification_engine` | Email sending | Email send attempts, SMTP details, TEST_MODE behavior, failures |
-| `orbit.notification.log` | `notification_engine` | Notification history logging | InsertNotificationHistory query execution, success/errors |
-| `orbit.database` | `helpers` | Database configuration queries | GetSiteConfig queries, results, connection issues |
-| `helpers` | `helpers` | Tag path resolution | Tag path lookups (database vs. demo mode), robot hostname mapping |
+| Logger Name                           | Module                | Purpose                                 | Key Events Logged                                                   |
+| ------------------------------------- | --------------------- | --------------------------------------- | ------------------------------------------------------------------- |
+| `orbit.api.robots`                    | `orbit_api`           | Orbit API - Robot configuration queries | API calls to `/api/v0/robots`, response validation, robot filtering |
+| `orbit.api.runs`                      | `orbit_api`           | Orbit API - Mission runs queries        | API calls to `/api/v0/runs`, parameter usage, response processing   |
+| `orbit.api.anomalies`                 | `orbit_api`           | Orbit API - Anomaly queries             | API calls to `/api/v0/anomalies`, filtering, results                |
+| `orbit.runs_polling`                  | `runs_polling`        | Main polling loop                       | Poll start/completion, run counts, change detection summary         |
+| `orbit.runs_polling.change_detection` | `runs_polling`        | Status change detection                 | New runs detected, status changes (old → new), no changes           |
+| `orbit.runs_polling.process`          | `runs_polling`        | Run event processing delegation         | Event type mapping, payload building, delegation to handlers        |
+| `orbit.runs_polling.tags`             | `runs_polling`        | Tag updates from polling                | Tag path resolution, write operations, error details                |
+| `orbit.run_event`                     | `run_event_handlers`  | Run event handling                      | Event reception, status mapping, processing flow                    |
+| `orbit.run_event.db`                  | `run_event_handlers`  | Database upsert operations              | UpsertRun query execution, parameters, rows affected, errors        |
+| `orbit.run_event.tags`                | `run_event_handlers`  | Tag updates from events                 | Tag path resolution, write operations, success/failure counts       |
+| `orbit.notification`                  | `notification_engine` | Notification evaluation                 | Rule evaluation start, context retrieval, rule matching summary     |
+| `orbit.notification.send`             | `notification_engine` | Email sending                           | Email send attempts, SMTP details, TEST_MODE behavior, failures     |
+| `orbit.notification.log`              | `notification_engine` | Notification history logging            | InsertNotificationHistory query execution, success/errors           |
+| `orbit.database`                      | `helpers`             | Database configuration queries          | GetSiteConfig queries, results, connection issues                   |
+| `helpers`                             | `helpers`             | Tag path resolution                     | Tag path lookups (database vs. demo mode), robot hostname mapping   |
 
 ### 7.5.2 Recommended Log Levels for Different Scenarios
 
 #### Development & Initial Setup
+
 ```
 orbit.* = DEBUG
 ```
+
 Shows all details including query parameters, status changes, and processing steps.
 
 #### Normal Operations
+
 ```
 orbit.* = INFO
 ```
+
 Shows important events like status changes, notifications sent, and API poll summaries. Minimal noise.
 
 #### Troubleshooting API Issues
+
 ```
 orbit.api.* = DEBUG
 orbit.runs_polling = DEBUG
 ```
+
 Detailed API request/response logging, parameter usage, and validation.
 
 #### Troubleshooting Notifications
+
 ```
 orbit.notification = DEBUG
 orbit.notification.send = DEBUG
 orbit.database = DEBUG
 ```
+
 Shows rule evaluation, recipient matching, template rendering, and email sending details.
 
 #### Troubleshooting Database Issues
+
 ```
 orbit.run_event.db = DEBUG
 orbit.database = DEBUG
 orbit.notification.log = DEBUG
 ```
+
 Shows all Named Query executions with parameters and results.
 
 #### Troubleshooting Tag Updates
+
 ```
 orbit.run_event.tags = DEBUG
 orbit.runs_polling.tags = DEBUG
 helpers = DEBUG
 ```
+
 Shows tag path resolution, write operations, and error details.
 
 #### Production (Minimal Logging)
+
 ```
 orbit.* = WARN
 ```
+
 Only logs warnings and errors. Use for production environments where INFO logs would generate too much data.
 
 ### 7.5.3 Sample Log Messages by Level
 
 #### INFO Level (Normal Operations)
+
 ```
 orbit.runs_polling | Fetched 25 run(s) from Orbit API
 orbit.runs_polling | Poll complete: processed 2 run status change(s) out of 25 runs
@@ -3528,6 +3603,7 @@ orbit.notification.send | Sent notification: [SUCCESS] Mission Patrol A Complete
 ```
 
 #### DEBUG Level (Detailed Troubleshooting)
+
 ```
 orbit.runs_polling | Starting runs poll from Orbit API (limit=50)
 orbit.runs_polling.process | Processing run event: uuid=12345678, mission=Patrol A, status=success, event_type=run.completed
@@ -3545,6 +3621,7 @@ orbit.notification.log | Logging notification history: rule_id=5, run=12345678, 
 ```
 
 #### WARN Level (Potential Issues)
+
 ```
 orbit.runs_polling | Skipping run with no UUID
 orbit.run_event | Unknown status 'cancelled' for run 12345678, defaulting to PEND
@@ -3556,6 +3633,7 @@ helpers | Tag path not found for robot: spot-unknown
 ```
 
 #### ERROR Level (Critical Failures)
+
 ```
 orbit.runs_polling | Runs polling failed: Connection refused
 orbit.run_event.db | Failed to upsert run 12345678: Named Query 'UpsertRun' not found
@@ -3569,16 +3647,16 @@ orbit.database | Failed to get site config for site_id=1: Query timeout
 
 ### 7.5.4 Using Logs for Troubleshooting
 
-| Problem | Logs to Check | What to Look For |
-|---------|---------------|------------------|
-| Polling not working | `orbit.runs_polling` at INFO | "Starting runs poll" messages every 60s |
-| API not returning data | `orbit.api.*` at DEBUG | API request parameters, response status codes |
-| Status changes not detected | `orbit.runs_polling.change_detection` at INFO | "New run detected" or "Status change detected" messages |
-| Database not updating | `orbit.run_event.db` at DEBUG | "Upserting run" with parameters, rows affected |
-| Tags not updating | `orbit.run_event.tags` at DEBUG | Tag paths being written, write results |
-| Notifications not sending | `orbit.notification` at DEBUG | Rule matching, recipient counts, email send attempts |
-| Wrong recipients getting emails | `orbit.notification` at DEBUG | Rule evaluation, pattern matching, recipient queries |
-| Email send failures | `orbit.notification.send` at DEBUG | SMTP host, from address, error messages |
+| Problem                         | Logs to Check                                 | What to Look For                                        |
+| ------------------------------- | --------------------------------------------- | ------------------------------------------------------- |
+| Polling not working             | `orbit.runs_polling` at INFO                  | "Starting runs poll" messages every 60s                 |
+| API not returning data          | `orbit.api.*` at DEBUG                        | API request parameters, response status codes           |
+| Status changes not detected     | `orbit.runs_polling.change_detection` at INFO | "New run detected" or "Status change detected" messages |
+| Database not updating           | `orbit.run_event.db` at DEBUG                 | "Upserting run" with parameters, rows affected          |
+| Tags not updating               | `orbit.run_event.tags` at DEBUG               | Tag paths being written, write results                  |
+| Notifications not sending       | `orbit.notification` at DEBUG                 | Rule matching, recipient counts, email send attempts    |
+| Wrong recipients getting emails | `orbit.notification` at DEBUG                 | Rule evaluation, pattern matching, recipient queries    |
+| Email send failures             | `orbit.notification.send` at DEBUG            | SMTP host, from address, error messages                 |
 
 ### 7.5.5 Log Configuration in Gateway
 
@@ -3600,49 +3678,50 @@ To configure log levels:
 
 ### 8.1 Rule: All Mission Failures → Operators + Maintenance
 
-| Field | Value |
-|-------|-------|
-| Rule Name | Mission Failed Alert |
-| Trigger Type | `RUN_FAIL` |
-| Mission Pattern | `NULL` (all missions) |
-| Status Filter | `NULL` |
-| Subject | `[ALERT] Mission Failed: {{MissionName}}` |
-| Recipients | operator@company.com (to), maintenance@company.com (cc) |
+| Field           | Value                                                   |
+| --------------- | ------------------------------------------------------- |
+| Rule Name       | Mission Failed Alert                                    |
+| Trigger Type    | `RUN_FAIL`                                              |
+| Mission Pattern | `NULL` (all missions)                                   |
+| Status Filter   | `NULL`                                                  |
+| Subject         | `[ALERT] Mission Failed: {{MissionName}}`               |
+| Recipients      | operator@company.com (to), maintenance@company.com (cc) |
 
 ### 8.2 Rule: Inspection Complete → Quality Team
 
-| Field | Value |
-|-------|-------|
-| Rule Name | Inspection Complete |
-| Trigger Type | `RUN_COMP` |
-| Mission Pattern | `%Inspection%` |
-| Status Filter | `COMP` |
-| Subject | `[INFO] Inspection Complete: {{MissionName}}` |
-| Recipients | quality@company.com (to) |
+| Field           | Value                                         |
+| --------------- | --------------------------------------------- |
+| Rule Name       | Inspection Complete                           |
+| Trigger Type    | `RUN_COMP`                                    |
+| Mission Pattern | `%Inspection%`                                |
+| Status Filter   | `COMP`                                        |
+| Subject         | `[INFO] Inspection Complete: {{MissionName}}` |
+| Recipients      | quality@company.com (to)                      |
 
 ### 8.3 Rule: Patrol Started → Security
 
-| Field | Value |
-|-------|-------|
-| Rule Name | Patrol Started |
-| Trigger Type | `RUN_START` |
-| Mission Pattern | `%Patrol%` |
-| Status Filter | `NULL` |
-| Subject | `[INFO] Patrol Started: {{MissionName}}` |
-| Recipients | security@company.com (to) |
+| Field           | Value                                    |
+| --------------- | ---------------------------------------- |
+| Rule Name       | Patrol Started                           |
+| Trigger Type    | `RUN_START`                              |
+| Mission Pattern | `%Patrol%`                               |
+| Status Filter   | `NULL`                                   |
+| Subject         | `[INFO] Patrol Started: {{MissionName}}` |
+| Recipients      | security@company.com (to)                |
 
 ### 8.4 Rule: Failed Patrol Only → Robotics Manager (Combined Filtering)
 
-| Field | Value |
-|-------|-------|
-| Rule Name | Failed Patrol Alert |
-| Trigger Type | `RUN_FAIL` |
-| Mission Pattern | `%Patrol%` (LIKE match) |
-| Status Filter | `FAIL` (exact match) |
-| Subject | `[URGENT] Patrol Mission Failed: {{MissionName}}` |
-| Recipients | robotics-manager@company.com (to), operations-director@company.com (cc) |
+| Field           | Value                                                                   |
+| --------------- | ----------------------------------------------------------------------- |
+| Rule Name       | Failed Patrol Alert                                                     |
+| Trigger Type    | `RUN_FAIL`                                                              |
+| Mission Pattern | `%Patrol%` (LIKE match)                                                 |
+| Status Filter   | `FAIL` (exact match)                                                    |
+| Subject         | `[URGENT] Patrol Mission Failed: {{MissionName}}`                       |
+| Recipients      | robotics-manager@company.com (to), operations-director@company.com (cc) |
 
 **Note:** This rule demonstrates combining both filters:
+
 - `MissionNamePattern` uses SQL LIKE matching (`%Patrol%` matches any mission with "Patrol" in the name)
 - `StatusCodeFilter` uses exact matching (only triggers when status is exactly `FAIL`)
 - Together, they create a highly specific rule that only fires for failed patrol missions
@@ -3664,7 +3743,7 @@ To configure log levels:
 ### Phase 2: Project Setup (Day 2)
 
 - [x] Create project: `SpotOrbitIntegration`
-- [x] ~~**Configure Gateway Scripting Project**~~ *(Not needed for this project)*
+- [x] ~~**Configure Gateway Scripting Project**~~ _(Not needed for this project)_
   - Gateway Timer Scripts created within the project already have access to the Project Library
   - Only required if using Tag Event Scripts or expression tags that call Project Library functions (see Section 6.1)
 - [x] Create Project Library structure:
@@ -3725,16 +3804,18 @@ To configure log levels:
 - [x] Create `runs_polling` module in Project Library
 - [ ] Create Gateway Timer Script `RunsPolling` (60000ms interval)
 - [ ] Test in Script Console:
+
   ```python
   # Test event handler directly
   run_event_handlers.handle_run_event({
       "type": "run.completed",
       "data": {"uuid": "test-123", "missionName": "Test", "status": "completed", "robot": {"hostname": "spot-demo-01"}}
   })
-  
+
   # Test full polling flow
   runs_polling.poll_recent_runs()
   ```
+
 - [ ] Verify polling → database → tag flow in Gateway logs
 
 ### Phase 7: Notifications (Day 4-5)
@@ -3766,18 +3847,18 @@ To configure log levels:
 
 ## 10. Future Expansion Points
 
-| Area | Current (Demo) | Future Enhancement |
-|------|----------------|-------------------|
-| **Sites** | 1 site | Multi-site with site selector |
-| **Robots** | 1-2 robots | N robots per site |
+| Area                | Current (Demo)                   | Future Enhancement                                            |
+| ------------------- | -------------------------------- | ------------------------------------------------------------- |
+| **Sites**           | 1 site                           | Multi-site with site selector                                 |
+| **Robots**          | 1-2 robots                       | N robots per site                                             |
 | **Robot Telemetry** | Not available (Orbit limitation) | Spot SDK middleware for battery/pose/state (See Section 11.2) |
-| **History** | Memory tags only | Tag Historian + Store & Forward |
-| **Alarms** | None | Alarm pipeline (battery low, comm lost) |
-| **Notifications** | Email only | SMS, Push, Teams/Slack webhooks |
-| **UI** | Single dashboard | Role-based views (Operator/Manager/Admin) |
-| **Anomalies** | Not tracked | Anomaly table + webhook handling |
-| **Security** | None | Role-based access control |
-| **Reports** | None | Scheduled PDF/Excel reports |
+| **History**         | Memory tags only                 | Tag Historian + Store & Forward                               |
+| **Alarms**          | None                             | Alarm pipeline (battery low, comm lost)                       |
+| **Notifications**   | Email only                       | SMS, Push, Teams/Slack webhooks                               |
+| **UI**              | Single dashboard                 | Role-based views (Operator/Manager/Admin)                     |
+| **Anomalies**       | Not tracked                      | Anomaly table + webhook handling                              |
+| **Security**        | None                             | Role-based access control                                     |
+| **Reports**         | None                             | Scheduled PDF/Excel reports                                   |
 
 ---
 
@@ -3786,13 +3867,13 @@ To configure log levels:
 > **⚠️ Important Limitation Discovered (2026-02-02):**
 > The Orbit API `/api/v0/robots` endpoint only returns **configuration data** (hostname, nickname, robotIndex, username), **NOT real-time telemetry** (battery, pose, connection status). See Section 11.1 for details and Section 11.2 for the alternative solution.
 
-| Endpoint | Method | Actual Data Provided |
-|----------|--------|----------------------|
-| `/api/v0/robots` | GET | Robot configuration only (hostname, nickname, robotIndex) |
-| `/api/v0/runs` | GET | Mission run history (status, times, robot info) |
-| `/api/v0/run_events` | GET | Action events within runs |
-| `/api/v0/anomalies` | GET | Detected anomalies/alerts |
-| `/api/v0/webhooks` | POST | Register webhook endpoints |
+| Endpoint             | Method | Actual Data Provided                                      |
+| -------------------- | ------ | --------------------------------------------------------- |
+| `/api/v0/robots`     | GET    | Robot configuration only (hostname, nickname, robotIndex) |
+| `/api/v0/runs`       | GET    | Mission run history (status, times, robot info)           |
+| `/api/v0/run_events` | GET    | Action events within runs                                 |
+| `/api/v0/anomalies`  | GET    | Detected anomalies/alerts                                 |
+| `/api/v0/webhooks`   | POST   | Register webhook endpoints                                |
 
 **Webhook Events:** Event types are not documented in the official API. Empirical testing required to discover available events.
 
@@ -3802,25 +3883,26 @@ Based on official Orbit API v5.0.0 documentation review:
 
 **What Orbit API DOES Provide:**
 
-| Data | Endpoint | Available Fields |
-|------|----------|------------------|
-| Robot Config | `/robots` | hostname, nickname, robotIndex, username |
-| Mission Runs | `/runs` | uuid, missionName, missionStatus, startTime, endTime, robotHostname |
-| Run Events | `/run_events` | actionName, time, error, missionName |
-| Anomalies | `/anomalies` | uuid, severity, title, status, runUuid |
+| Data         | Endpoint      | Available Fields                                                    |
+| ------------ | ------------- | ------------------------------------------------------------------- |
+| Robot Config | `/robots`     | hostname, nickname, robotIndex, username                            |
+| Mission Runs | `/runs`       | uuid, missionName, missionStatus, startTime, endTime, robotHostname |
+| Run Events   | `/run_events` | actionName, time, error, missionName                                |
+| Anomalies    | `/anomalies`  | uuid, severity, title, status, runUuid                              |
 
 **What Orbit API Does NOT Provide:**
 
-| Data | Status | Alternative |
-|------|--------|-------------|
-| Battery level | ❌ Not available | Spot SDK (Section 11.2) |
+| Data                     | Status           | Alternative             |
+| ------------------------ | ---------------- | ----------------------- |
+| Battery level            | ❌ Not available | Spot SDK (Section 11.2) |
 | Robot pose (x, y, theta) | ❌ Not available | Spot SDK (Section 11.2) |
-| Connection status | ❌ Not available | Spot SDK (Section 11.2) |
-| Charging status | ❌ Not available | Spot SDK (Section 11.2) |
-| Robot operational state | ❌ Not available | Spot SDK (Section 11.2) |
-| Motor temperatures | ❌ Not available | Spot SDK (Section 11.2) |
+| Connection status        | ❌ Not available | Spot SDK (Section 11.2) |
+| Charging status          | ❌ Not available | Spot SDK (Section 11.2) |
+| Robot operational state  | ❌ Not available | Spot SDK (Section 11.2) |
+| Motor temperatures       | ❌ Not available | Spot SDK (Section 11.2) |
 
 **Impact on Current Plan:**
+
 - The `robot_polling` module cannot retrieve real-time telemetry from Orbit
 - Polling tags (BatteryLevel, IsConnected, IsCharging, Pose) will remain at default values
 - Mission-related data via webhooks and `/runs` endpoint still works as designed
@@ -3853,11 +3935,13 @@ If real-time robot telemetry (battery, pose, state) is needed, the solution is t
 ```
 
 **The Problem:**
+
 - Ignition runs Jython 2.7 (limited Python, no pip packages)
 - Spot SDK requires Python 3.7+ and uses gRPC (binary protocol)
 - Cannot install bosdyn-client in Ignition
 
 **The Solution:**
+
 - Python 3 microservice (Flask/FastAPI) that connects to Spot robots
 - Exposes REST API endpoints returning JSON
 - Ignition polls the middleware using `system.net.httpClient()`
@@ -3866,19 +3950,20 @@ If real-time robot telemetry (battery, pose, state) is needed, the solution is t
 
 Based on official Boston Dynamics Spot SDK v5.1.0 (`robot_state.proto`):
 
-| Data | Proto Message | Fields |
-|------|---------------|--------|
-| **Battery** | `BatteryState` | `charge_percentage` (0-100%), `estimated_runtime`, `current` (amps), `voltage`, `temperatures[]`, `status` (CHARGING/DISCHARGING) |
-| **Power** | `PowerState` | `motor_power_state` (OFF/ON/POWERING_ON/ERROR), `shore_power_state`, `locomotion_charge_percentage` |
-| **Position** | `KinematicState` | `transforms_snapshot` (body frame pose), `velocity_of_body_in_odom` |
-| **E-Stop** | `EStopState` | `name`, `type` (HARDWARE/SOFTWARE), `state` (ESTOPPED/NOT_ESTOPPED) |
-| **Behavior** | `BehaviorState` | `state` (NOT_READY/TRANSITION/STANDING/STEPPING) |
-| **Faults** | `SystemFaultState` | `faults[]` with severity, error messages |
-| **Foot State** | `FootState` | Per-foot position and contact state |
-| **Motor Temps** | `SystemState` | `motor_temperatures[]` per motor |
-| **WiFi** | `CommsState` | WiFi mode (AP/Client), ESSID |
+| Data            | Proto Message      | Fields                                                                                                                            |
+| --------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Battery**     | `BatteryState`     | `charge_percentage` (0-100%), `estimated_runtime`, `current` (amps), `voltage`, `temperatures[]`, `status` (CHARGING/DISCHARGING) |
+| **Power**       | `PowerState`       | `motor_power_state` (OFF/ON/POWERING_ON/ERROR), `shore_power_state`, `locomotion_charge_percentage`                               |
+| **Position**    | `KinematicState`   | `transforms_snapshot` (body frame pose), `velocity_of_body_in_odom`                                                               |
+| **E-Stop**      | `EStopState`       | `name`, `type` (HARDWARE/SOFTWARE), `state` (ESTOPPED/NOT_ESTOPPED)                                                               |
+| **Behavior**    | `BehaviorState`    | `state` (NOT_READY/TRANSITION/STANDING/STEPPING)                                                                                  |
+| **Faults**      | `SystemFaultState` | `faults[]` with severity, error messages                                                                                          |
+| **Foot State**  | `FootState`        | Per-foot position and contact state                                                                                               |
+| **Motor Temps** | `SystemState`      | `motor_temperatures[]` per motor                                                                                                  |
+| **WiFi**        | `CommsState`       | WiFi mode (AP/Client), ESSID                                                                                                      |
 
 **Official Documentation:**
+
 - Spot SDK: https://dev.bostondynamics.com/readme
 - Robot State Client: https://dev.bostondynamics.com/python/bosdyn-client/src/bosdyn/client/robot_state.html
 - Proto definitions: https://github.com/boston-dynamics/spot-sdk/blob/master/protos/bosdyn/api/robot_state.proto
@@ -3911,16 +3996,17 @@ Based on official Boston Dynamics Spot SDK v5.1.0 (`robot_state.proto`):
 
 **Hybrid Data Flow:**
 
-| Data Type | Source | Method | Update Rate |
-|-----------|--------|--------|-------------|
-| Battery, Pose, State | Spot Middleware | Ignition polls REST | Every 5-15s |
-| Mission Events | Orbit Server | Webhook push | Real-time |
-| Mission History | Orbit `/runs` | Ignition polls REST | Every 60s |
-| Anomalies | Orbit `/anomalies` | Ignition polls REST | Every 60s |
+| Data Type            | Source             | Method              | Update Rate |
+| -------------------- | ------------------ | ------------------- | ----------- |
+| Battery, Pose, State | Spot Middleware    | Ignition polls REST | Every 5-15s |
+| Mission Events       | Orbit Server       | Webhook push        | Real-time   |
+| Mission History      | Orbit `/runs`      | Ignition polls REST | Every 60s   |
+| Anomalies            | Orbit `/anomalies` | Ignition polls REST | Every 60s   |
 
 #### 11.2.4 Middleware Implementation Outline
 
 **Requirements:**
+
 ```txt
 # requirements.txt
 flask==3.0.0
@@ -3929,6 +4015,7 @@ bosdyn-mission==4.0.0
 ```
 
 **Example Flask Service:**
+
 ```python
 # spot_middleware.py
 from flask import Flask, jsonify
@@ -3947,17 +4034,17 @@ def get_robot_state(hostname):
     config = ROBOTS.get(hostname)
     if not config:
         return jsonify({"error": "Robot not found"}), 404
-    
+
     try:
         sdk = create_standard_sdk('IgnitionMiddleware')
         robot = sdk.create_robot(config["ip"])
         robot.authenticate(config["username"], config["password"])
         client = robot.ensure_client(RobotStateClient.default_service_name)
         state = client.get_robot_state()
-        
+
         battery = state.battery_states[0] if state.battery_states else None
         power = state.power_state
-        
+
         return jsonify({
             "hostname": hostname,
             "batteryLevel": battery.charge_percentage.value if battery else 0,
@@ -3978,24 +4065,25 @@ if __name__ == '__main__':
 ```
 
 **Ignition Polling Script:**
+
 ```python
 # Modified robot_polling module for middleware
 def poll_all_robots():
     logger = system.util.getLogger("spot.polling")
-    
+
     try:
         # Call middleware instead of Orbit
         response = system.net.httpClient().get("http://spot-middleware:5000/robots")
-        
+
         if not response.good:
             logger.error("Middleware error: {}".format(response.statusCode))
             return
-        
+
         for robot in response.json:
             tag_base = helpers.get_robot_tag_base(robot["hostname"])
             if not tag_base:
                 continue
-            
+
             system.tag.writeBlocking([
                 tag_base + "/BatteryLevel",
                 tag_base + "/IsCharging",
@@ -4007,7 +4095,7 @@ def poll_all_robots():
                 robot.get("isConnected", False),
                 system.date.now()
             ])
-        
+
         logger.info("Polled {} robots via middleware".format(len(response.json)))
     except Exception as e:
         logger.error("Middleware polling failed: {}".format(str(e)))
@@ -4015,14 +4103,15 @@ def poll_all_robots():
 
 #### 11.2.5 Deployment Options
 
-| Option | Complexity | Notes |
-|--------|------------|-------|
-| **Python Script** | Low | Run directly on server with Python 3.7+ |
-| **Docker Container** | Low-Medium | Portable, easy deployment |
-| **Kubernetes** | Medium-High | For production scalability |
-| **Ignition Module** | High | Native integration (requires Java development) |
+| Option               | Complexity  | Notes                                          |
+| -------------------- | ----------- | ---------------------------------------------- |
+| **Python Script**    | Low         | Run directly on server with Python 3.7+        |
+| **Docker Container** | Low-Medium  | Portable, easy deployment                      |
+| **Kubernetes**       | Medium-High | For production scalability                     |
+| **Ignition Module**  | High        | Native integration (requires Java development) |
 
 **Docker Deployment:**
+
 ```dockerfile
 FROM python:3.10-slim
 WORKDIR /app
@@ -4048,16 +4137,16 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 
 #### 11.2.7 Decision Matrix
 
-| Requirement | Orbit Only | Orbit + Spot SDK |
-|-------------|------------|------------------|
-| Mission notifications | ✅ Yes | ✅ Yes |
-| Mission history | ✅ Yes | ✅ Yes |
-| Real-time battery | ❌ No | ✅ Yes |
-| Real-time pose | ❌ No | ✅ Yes |
-| Robot state (idle/moving) | ❌ No | ✅ Yes |
-| Setup complexity | Low | Medium |
-| Infrastructure | Ignition only | Ignition + Middleware |
-| Maintenance | Low | Medium |
+| Requirement               | Orbit Only    | Orbit + Spot SDK      |
+| ------------------------- | ------------- | --------------------- |
+| Mission notifications     | ✅ Yes        | ✅ Yes                |
+| Mission history           | ✅ Yes        | ✅ Yes                |
+| Real-time battery         | ❌ No         | ✅ Yes                |
+| Real-time pose            | ❌ No         | ✅ Yes                |
+| Robot state (idle/moving) | ❌ No         | ✅ Yes                |
+| Setup complexity          | Low           | Medium                |
+| Infrastructure            | Ignition only | Ignition + Middleware |
+| Maintenance               | Low           | Medium                |
 
 **Recommendation:** Start with Orbit-only approach for mission notifications. Add Spot SDK middleware when real-time telemetry becomes a requirement.
 
@@ -4065,16 +4154,16 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 
 ## 12. Documentation References Summary
 
-| Topic | Official Documentation |
-|-------|----------------------|
-| **Script Organization** | [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library) |
+| Topic                     | Official Documentation                                                                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Script Organization**   | [Project Library](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/project-library)                          |
 | **Gateway Timer Scripts** | [Gateway Event Scripts](https://docs.inductiveautomation.com/docs/8.1/platform/scripting/scripting-in-ignition/gateway-event-scripts#timer-script) |
-| **Web Dev Module** | [Web Dev](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev) *(Optional - see Appendix A)* |
-| **HTTP Client** | [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient) |
-| **Named Queries** | [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries) |
-| **UDT Best Practices** | [User Defined Types](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts) |
-| **Logging** | [system.util.getLogger](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-util/system-util-getLogger) |
-| **Deployment** | [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices) |
+| **Web Dev Module**        | [Web Dev](https://docs.inductiveautomation.com/docs/8.1/ignition-modules/web-dev) _(Optional - see Appendix A)_                                    |
+| **HTTP Client**           | [system.net.httpClient](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-net/system-net-httpClient)               |
+| **Named Queries**         | [Named Queries](https://docs.inductiveautomation.com/docs/8.1/platform/sql-in-ignition/named-queries)                                              |
+| **UDT Best Practices**    | [User Defined Types](https://docs.inductiveautomation.com/docs/8.1/platform/tags/user-defined-types-udts)                                          |
+| **Logging**               | [system.util.getLogger](https://docs.inductiveautomation.com/docs/8.1/appendix/scripting-functions/system-util/system-util-getLogger)              |
+| **Deployment**            | [Deployment Best Practices](https://docs.inductiveautomation.com/docs/8.1/tutorials/ignition-8-deployment-best-practices)                          |
 
 ---
 
@@ -4084,17 +4173,18 @@ docker run -d -p 5000:5000 --name spot-middleware spot-middleware
 
 ### A.1 When to Use Webhooks Instead of Polling
 
-| Requirement | Use Polling | Use Webhooks |
-|-------------|-------------|--------------|
-| Update latency acceptable: 30-60 seconds | ✅ Yes | Overkill |
-| Need real-time updates (< 5 seconds) | ❌ No | ✅ Yes |
-| Web Dev module already licensed | Either works | ✅ Yes |
-| Want to minimize license costs | ✅ Yes | ❌ Extra cost |
-| Multiple external systems pushing data | Consider webhooks | ✅ Yes |
+| Requirement                              | Use Polling       | Use Webhooks  |
+| ---------------------------------------- | ----------------- | ------------- |
+| Update latency acceptable: 30-60 seconds | ✅ Yes            | Overkill      |
+| Need real-time updates (< 5 seconds)     | ❌ No             | ✅ Yes        |
+| Web Dev module already licensed          | Either works      | ✅ Yes        |
+| Want to minimize license costs           | ✅ Yes            | ❌ Extra cost |
+| Multiple external systems pushing data   | Consider webhooks | ✅ Yes        |
 
 ### A.2 Web Dev Module Setup
 
 **Prerequisites:**
+
 - Web Dev module must be installed and licensed (Gateway > Config > Modules)
 - Additional license cost (contact Inductive Automation)
 
@@ -4127,37 +4217,37 @@ Note: This requires Web Dev module license.
 def doPost(request, session):
     """
     Handle incoming webhook from Orbit.
-    
+
     Args:
         request: Dictionary with keys: data, headers, params, remoteAddr, etc.
         session: Dictionary for session state (cookies must be enabled)
-    
+
     Returns:
         dict: Response dictionary with 'json', 'html', or 'response' key
     """
     logger = system.util.getLogger("orbit.webhook")
-    
+
     try:
         # request["data"] is automatically parsed as dict when Content-Type is application/json
         payload = request["data"]
-        
+
         # If payload is string (non-JSON content type), parse it
         if isinstance(payload, basestring):
             import json
             payload = json.loads(payload)
-        
+
         event_type = payload.get("type", "")
         logger.info("Received webhook: {} from {}".format(event_type, request["remoteAddr"]))
-        
+
         # Route by event type - delegate to run_event_handlers module
         if event_type.startswith("run"):
             run_event_handlers.handle_run_event(payload)
         else:
             logger.warn("Unknown event type: {}".format(event_type))
-        
+
         # Return JSON response
         return {"json": {"status": "ok", "received": event_type}}
-        
+
     except Exception as e:
         logger.error("Webhook error: {}".format(str(e)))
         return {"json": {"status": "error", "message": str(e)}}
@@ -4211,6 +4301,6 @@ This ensures data integrity even if webhooks are missed due to network issues.
 
 ---
 
-*Document maintained by: AME-Junsu Lee*  
-*Version: 2.13 (Demo MVP) - Use Actual Timestamps from Orbit API*  
-*Based on: ignition-spot-long-plan.md (Enterprise Version)*
+_Document maintained by: AME-Junsu Lee_  
+_Version: 2.13 (Demo MVP) - Use Actual Timestamps from Orbit API_  
+_Based on: ignition-spot-long-plan.md (Enterprise Version)_
