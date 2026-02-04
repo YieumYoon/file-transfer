@@ -41,6 +41,7 @@ specific category file for detailed endpoint information. Schema definitions are
 | [Webhooks](webhooks.md) | 5 endpoints | `webhooks.md` |
 
 | [Schemas](schemas.md) | Data model definitions | `schemas.md` |
+| [**Actual Responses**](actual-responses.md) | **Verified API responses** | `actual-responses.md` |
 
 ## Authentication
 
