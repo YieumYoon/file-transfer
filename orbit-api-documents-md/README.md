@@ -13,7 +13,7 @@ The Orbit web API provides access to a variety of resources through RESTful http
 **CRITICAL:** Before making ANY assumptions about API response values:
 
 1. ✅ **Check [actual-responses.md](actual-responses.md) FIRST** - Contains verified real API responses
-2. ✅ **Check `api-responses-json/` directory** - Contains actual JSON response files
+2. ✅ **Check `orbit-api/` directory** - Contains Bruno collection with real API responses
 3. ❌ **DO NOT assume** response values based on "common API patterns"
 4. ❌ **DO NOT claim "verified"** unless documented in actual-responses.md
 
@@ -79,10 +79,11 @@ Each category file contains all endpoints related to that functionality.
 orbit-api-documents-md/
 ├── README.md                    ← Start here
 ├── actual-responses.md          ← **VERIFIED API responses** (check first!)
-├── api-responses-json/          ← Real JSON response files
-│   ├── runs.json               ← Actual GET /runs response
-│   ├── robots.json             ← Actual GET /robots response
-│   └── anomalies.json          ← Actual GET /anomalies response
+├── orbit-api/                   ← **Bruno Collection** (real API requests/responses)
+│   ├── bruno.json              ← Collection settings (auth, etc.)
+│   ├── runs.bru                ← GET /runs (request + response)
+│   ├── robots.bru              ← GET /robots (request + response)
+│   └── anomalies.bru           ← GET /anomalies (request + response)
 ├── runs.md                      ← Endpoint documentation
 ├── robots.md                    ← Endpoint documentation
 ├── schemas.md                   ← Data model definitions
@@ -118,12 +119,12 @@ orbit-api-documents-md/
 
 ## 🚨 Important Files
 
-| File                                           | Purpose                         | When to Use                   |
-| ---------------------------------------------- | ------------------------------- | ----------------------------- |
-| [**actual-responses.md**](actual-responses.md) | **Verified real API responses** | **Check FIRST before coding** |
-| `api-responses-json/*.json`                    | Raw JSON response files         | Query with jq, use in tests   |
-| [schemas.md](schemas.md)                       | Data model definitions          | Understand field types        |
-| [AGENTS.md](../AGENTS.md)                      | AI Agent guidelines             | Prevent false assumptions     |
+| File                                           | Purpose                               | When to Use                        |
+| ---------------------------------------------- | ------------------------------------- | ---------------------------------- |
+| [**actual-responses.md**](actual-responses.md) | **Verified real API responses**       | **Check FIRST before coding**      |
+| `orbit-api/*.bru`                              | Bruno collection (requests/responses) | Send requests, view real responses |
+| [schemas.md](schemas.md)                       | Data model definitions                | Understand field types             |
+| [AGENTS.md](../AGENTS.md)                      | AI Agent guidelines                   | Prevent false assumptions          |
 
 ## Authentication
 
@@ -173,9 +174,11 @@ status_map = {
     "error": "FAIL",       # ✅ Verified in actual-responses.md (observed 20 times)
 }
 
-# Step 2b: If NOT verified → request user to capture
-# "Before implementing, please capture real API responses:
-#  curl ... /api/v0/runs | jq . > api-responses-json/runs.json
+# Step 2b: If NOT verified → request user to send requests in Bruno
+# "Before implementing, please:
+#  1. Open Bruno → orbit-api collection
+#  2. Send runs.bru request
+#  3. Check response → note missionStatus values
 #  Then I'll use the REAL values instead of assumptions."
 ```
 

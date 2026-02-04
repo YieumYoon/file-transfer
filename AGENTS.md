@@ -54,7 +54,7 @@ status_map = {
 
 1. **Check for existing real data:**
    - Check `orbit-api-documents-md/actual-responses.md` for verified values
-   - Check `orbit-api-documents-md/api-responses-json/` for JSON files
+   - Check `orbit-api-documents-md/orbit-api/` for Bruno collection responses
    - If none exist → **STOP and request from user**
 
 2. **Request user to capture real API responses:**
@@ -62,13 +62,14 @@ status_map = {
    ```
    Before I implement this, I need to verify the actual API responses.
 
-   Can you run these commands and share the output?
+   Can you send the API request in Bruno?
 
-   curl -H "Authorization: Bearer YOUR_TOKEN" \
-     "https://your-server/api/v0/runs?limit=100" \
-     | jq . > orbit-api-documents-md/api-responses-json/runs.json
+   1. Open Bruno → orbit-api-documents-md/orbit-api/ collection
+   2. Open runs.bru → Click Send
+   3. View the Response tab
+   4. Note the missionStatus values you see
 
-   Then I can use the REAL field values from the JSON file.
+   Then I can use the REAL field values from the response.
    ```
 
 3. **Mark assumptions clearly:**
@@ -105,13 +106,15 @@ but does NOT list the possible values.
 
 Before I can implement status handling correctly, we need actual responses.
 
-Please run:
-  curl -H "Authorization: Bearer YOUR_TOKEN" \
-    "https://your-server/api/v0/runs?limit=100" \
-    | jq . > orbit-api-documents-md/api-responses-json/runs.json
+Please:
+  1. Open Bruno → orbit-api-documents-md/orbit-api/ collection
+  2. Open runs.bru → Click Send
+  3. In Response tab, scroll through resources[] array
+  4. Note all unique missionStatus values you see
 
-Then extract status values:
-  jq -r '.resources[].missionStatus' orbit-api-documents-md/api-responses-json/runs.json | sort | uniq -c
+Or extract from Bruno response:
+  grep -A 9999 "^}$" orbit-api-documents-md/orbit-api/runs.bru | \
+    jq -r '.resources[].missionStatus' | sort | uniq -c
 
 This will show ALL status values currently in your system.
 ```
@@ -417,7 +420,7 @@ When working on Orbit API integration tasks, **ALWAYS search the local API docum
 **Priority Order:**
 
 1. **Check `actual-responses.md` FIRST** - Contains verified real API responses
-2. **Check `api-responses-json/*.json`** - Contains raw JSON response files
+2. **Check `orbit-api/*.bru`** - Bruno collection with real request/response examples
 3. **Check endpoint docs** - `runs.md`, `robots.md`, etc. for API structure
 4. **Check `schemas.md`** - For data model definitions
 
@@ -431,7 +434,7 @@ When working on Orbit API integration tasks, **ALWAYS search the local API docum
 **Available Documentation:**
 
 - `actual-responses.md` - **Verified API responses (check first!)**
-- `api-responses-json/` - Raw JSON response files
+- `orbit-api/` - **Bruno collection** with real API requests/responses
 - `README.md` - API overview and AI agent guidelines
 - `authentication.md`, `runs.md`, `robots.md`, `webhooks.md`, etc.
 - `schemas.md` - Data model definitions
@@ -496,7 +499,7 @@ _Purpose: Prevent similar issues in future agent interactions_
 **v2.13 Updates (2026-02-04):**
 
 - ✅ Consolidated validation docs → single `actual-responses.md` file
-- ✅ Organized JSON responses in `orbit-api-documents-md/api-responses-json/`
-- ✅ Updated all file paths to reflect new structure
+- ✅ Set up Bruno collection in `orbit-api-documents-md/orbit-api/`
+- ✅ Updated all file paths to reflect Bruno collection structure
 - ✅ Enhanced `orbit-api-documents-md/README.md` with AI agent guidelines
 - ✅ Simplified this document - removed redundant sections

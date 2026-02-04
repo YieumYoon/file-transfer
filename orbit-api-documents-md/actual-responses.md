@@ -10,46 +10,47 @@
 
 **Current Status:** 🔴 **ALL VALUES UNVERIFIED** - No real API testing has occurred yet.
 
-### Step 1: Capture Responses (10 min)
+### Step 1: Send Requests in Bruno (5 min)
 
-**In Terminal:**
+**Bruno Collection:** `orbit-api-documents-md/orbit-api/`
 
-```bash
-# Capture using Bruno (or curl)
-# Option A: Bruno → Send → Save Response → orbit-api-documents-md/api-responses-json/runs.json
-# Option B: curl commands:
-cd /Users/junsu/Documents/Github/file-transfer
-
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  "https://your-server/api/v0/runs?limit=100" \
-  | jq . > orbit-api-documents-md/api-responses-json/runs.json
-
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  "https://your-server/api/v0/robots" \
-  | jq . > orbit-api-documents-md/api-responses-json/robots.json
-
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  "https://your-server/api/v0/anomalies?limit=50" \
-  | jq . > orbit-api-documents-md/api-responses-json/anomalies.json
-```
+1. **Open Bruno** → Open Collection → `orbit-api-documents-md/orbit-api/`
+2. **Configure Auth** (one-time):
+   - Collection Settings → Auth → Bearer Token
+   - Paste your Orbit API token
+3. **Send requests:**
+   - Open `runs.bru` → Click Send → Response appears in Bruno
+   - Open `robots.bru` → Click Send
+   - Open `anomalies.bru` → Click Send (if exists)
+4. **Bruno saves responses** in the .bru files automatically
 
 **Result:**
 
 ```
 orbit-api-documents-md/
 ├── actual-responses.md          ← 이 파일 (분석 & 검증)
-├── api-responses-json/          ← JSON 응답 파일들
-│   ├── runs.json                ← 실제 GET /runs 응답
-│   ├── robots.json              ← 실제 GET /robots 응답
-│   └── anomalies.json           ← 실제 GET /anomalies 응답
+├── orbit-api/                   ← Bruno Collection
+│   ├── runs.bru                 ← GET /runs (request + response)
+│   ├── robots.bru               ← GET /robots (request + response)
+│   └── anomalies.bru            ← GET /anomalies (request + response)
 └── (기타 API 문서들...)
 ```
 
 ### Step 2: Extract Status Values (5 min)
 
+**In Bruno:**
+
+1. Open `runs.bru` → View Response tab
+2. Scroll through `resources[]` array
+3. Note all unique `missionStatus` values
+
+**Or use jq on Bruno response:**
+
 ```bash
-# 모든 status 값 추출 (카운트 포함)
-jq -r '.resources[].missionStatus' api-responses/runs.json | sort | uniq -c
+# Bruno stores response in .bru file - extract it first
+# Then parse with jq
+grep -A 9999 "^}$" orbit-api-documents-md/orbit-api/runs.bru | \
+  jq -r '.resources[].missionStatus' | sort | uniq -c
 
 # 결과 예시:
   45 success
@@ -64,7 +65,7 @@ jq -r '.resources[].missionStatus' api-responses/runs.json | sort | uniq -c
 
 **이 파일(actual-responses.md)에:**
 
-- ✅ 파일 경로 기록: `api-responses/runs.json`
+- ✅ Bruno 파일 확인: `orbit-api/runs.bru` response 존재
 - ✅ 발견된 status 값 테이블 작성
 - ✅ Response format 체크: Array vs `{"resources": [...]}`
 - ✅ 체크박스 ✅ 표시
@@ -74,7 +75,7 @@ jq -r '.resources[].missionStatus' api-responses/runs.json | sort | uniq -c
 **File:** `ignition-spot-simple-plan.md` (line ~1270, ~1750)
 
 ```python
-# ✅ VERIFIED - 2026-02-04 from api-responses/runs.json
+# ✅ VERIFIED - 2026-02-04 from Bruno orbit-api/runs.bru
 status_map = {
     "success": "COMP",    # ✅ Observed: 45 times
     "running": "RUN",     # ✅ Observed: 30 times
@@ -107,19 +108,14 @@ status_map = {
 
 ### Actual Response File
 
-**Location:** `api-responses/robots.json`
+**Location:** `orbit-api/robots.bru`
 
-**Captured:** ⬜ Not yet | ✅ Date: \***\*\_\_\_\*\***
+**Captured:** ⬜ Not yet | ✅ Date: **\*\*****\_\_****\*\***
 
 **Quick View:**
 
-```bash
-# View file
-cat api-responses/robots.json | jq .
-
-# Count robots
-jq 'length' api-responses/robots.json
-```
+- Open `robots.bru` in Bruno → View Response tab
+- Or extract from .bru file and parse with jq
 
 ### Verified Fields
 
@@ -146,22 +142,14 @@ jq 'length' api-responses/robots.json
 
 ### Actual Response File
 
-**Location:** `api-responses/runs.json`
+**Location:** `orbit-api/runs.bru`
 
-**Captured:** ⬜ Not yet | ✅ Date: \***\*\_\_\_\*\***
+**Captured:** ⬜ Not yet | ✅ Date: **\*\*****\_\_****\*\***
 
 **Quick View:**
 
-```bash
-# View file
-cat orbit-api-documents-md/api-responses-json/runs.json | jq .
-
-# Extract all status values with counts
-jq -r '.resources[].missionStatus' orbit-api-documents-md/api-responses-json/runs.json | sort | uniq -c
-
-# Check response structure
-jq 'keys' orbit-api-documents-md/api-responses-json/runs.json
-```
+- **In Bruno:** Open `runs.bru` → Send → View Response tab
+- **Response fields:** Scroll through `resources[]` array in Bruno UI
 
 ### Verified Fields
 
@@ -259,19 +247,14 @@ for run in runs:
 
 ### Actual Response File
 
-**Location:** `orbit-api-documents-md/api-responses-json/anomalies.json`
+**Location:** `orbit-api/anomalies.bru`
 
-**Captured:** ⬜ Not yet | ✅ Date: ****\_\_\_****
+**Captured:** ⬜ Not yet | ✅ Date: \***\***\_\_**\*\***
 
 **Quick View:**
 
-```bash
-# View file
-cat orbit-api-documents-md/api-responses-json/anomalies.json | jq .
-
-# Extract severity values
-jq -r '.resources[].severity' orbit-api-documents-md/api-responses-json/anomalies.json | sort | uniq -c
-```
+- **In Bruno:** Open `anomalies.bru` → Send → View Response tab
+- **Severity values:** Check `resources[].severity` field in response
 
 ### Verified Fields
 
@@ -436,46 +419,47 @@ status_map = {
 ```
 orbit-api-documents-md/
 ├── actual-responses.md          ← 이 파일 (분석 & 검증)
-├── api-responses-json/          ← JSON 응답 파일들
-│   ├── runs.json                ← GET /runs actual response
-│   ├── robots.json              ← GET /robots actual response
-│   ├── anomalies.json           ← GET /anomalies actual response
-│   └── webhook-*.json           ← Webhook payloads (if captured)
+├── orbit-api/                   ← Bruno Collection
+│   ├── bruno.json               ← Collection settings (auth, etc.)
+│   ├── runs.bru                 ← GET /runs (request + response)
+│   ├── robots.bru               ← GET /robots (request + response)
+│   └── anomalies.bru            ← GET /anomalies (request + response)
 └── (기타 API 문서들: runs.md, robots.md, ...)
 ```
 
-### Why Separate Files?
+### Why Bruno Collection?
 
-✅ **Query with jq:** `jq '.resources[] | select(.missionStatus == "error")' orbit-api-documents-md/api-responses-json/runs.json`  
-✅ **Git diff:** See what changed between captures  
-✅ **Reusable:** Use in tests, scripts, documentation  
-✅ **Clean:** actual-responses.md stays small and readable
+✅ **Request + Response together:** Everything in one .bru file  
+✅ **Git-friendly:** Text format, easy to diff  
+✅ **Reusable:** Run requests directly from Bruno GUI  
+✅ **No curl hassle:** No need to copy-paste auth tokens  
+✅ **Team sharing:** Commit collection to repo, anyone can use
 
-### Capture Commands (Copy-Paste Ready)
+### Using Bruno Collection
+
+**One-time setup:**
+
+1. **Open Bruno** → Open Collection → `orbit-api-documents-md/orbit-api/`
+2. **Configure Auth:**
+   - Right-click Collection → Settings → Auth
+   - Select "Bearer Token"
+   - Paste your Orbit API token
+   - Auth applies to ALL requests in collection
+
+**Daily workflow:**
+
+1. Open Bruno → Collection already loaded
+2. Click `runs.bru` → Click Send → Response appears
+3. Click `robots.bru` → Click Send
+4. Responses saved automatically in .bru files
+
+**Extract data with jq (optional):**
 
 ```bash
-# Set variables once
-export ORBIT_URL="https://your-orbit-server"
-export ORBIT_TOKEN="your-api-token"
-
-# From project root directory
-cd /Users/junsu/Documents/Github/file-transfer
-
-# Capture all endpoints
-curl -H "Authorization: Bearer $ORBIT_TOKEN" \
-  "$ORBIT_URL/api/v0/runs?limit=100" \
-  | jq . > orbit-api-documents-md/api-responses-json/runs.json
-
-curl -H "Authorization: Bearer $ORBIT_TOKEN" \
-  "$ORBIT_URL/api/v0/robots" \
-  | jq . > orbit-api-documents-md/api-responses-json/robots.json
-
-curl -H "Authorization: Bearer $ORBIT_TOKEN" \
-  "$ORBIT_URL/api/v0/anomalies?limit=50" \
-  | jq . > orbit-api-documents-md/api-responses-json/anomalies.json
-
-# Analyze status values
-jq -r '.resources[].missionStatus' orbit-api-documents-md/api-responses-json/runs.json | sort | uniq -c
+# Bruno stores response in .bru file
+# Extract JSON portion and analyze
+grep -A 9999 "^}$" orbit-api-documents-md/orbit-api/runs.bru | \
+  jq -r '.resources[].missionStatus' | sort | uniq -c
 ```
 
 ---
