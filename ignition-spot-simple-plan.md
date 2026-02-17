@@ -660,22 +660,22 @@ VALUES
 (7, 'cc', 'your.email@example.com', 'Operations Director');
 
 -- Sample Run Data (for testing dashboard and notifications)
-INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc, IsProcessed)
+INSERT INTO RoboticsRuns (SiteId, RobotId, OrbitRunUuid, OrbitMissionId, MissionName, MissionStatusCode, StartedAtUtc, CompletedAtUtc, IsProcessed)
 VALUES
 -- Completed missions
-(1, 1, '550e8400-e29b-41d4-a716-446655440001', 'Inspection-Zone-A', 'COMP', DATEADD(HOUR, -2, SYSUTCDATETIME()), DATEADD(MINUTE, -105, SYSUTCDATETIME()), 1),
-(1, 1, '550e8400-e29b-41d4-a716-446655440002', 'Patrol-North', 'COMP', DATEADD(HOUR, -4, SYSUTCDATETIME()), DATEADD(HOUR, -3, SYSUTCDATETIME()), 1),
-(1, 1, '550e8400-e29b-41d4-a716-446655440003', 'Inspection-Zone-B', 'COMP', DATEADD(HOUR, -6, SYSUTCDATETIME()), DATEADD(MINUTE, -330, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440001', NULL, 'Inspection-Zone-A', 'COMP', DATEADD(HOUR, -2, SYSUTCDATETIME()), DATEADD(MINUTE, -105, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440002', NULL, 'Patrol-North', 'COMP', DATEADD(HOUR, -4, SYSUTCDATETIME()), DATEADD(HOUR, -3, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440003', NULL, 'Inspection-Zone-B', 'COMP', DATEADD(HOUR, -6, SYSUTCDATETIME()), DATEADD(MINUTE, -330, SYSUTCDATETIME()), 1),
 
 -- Failed missions
-(1, 1, '550e8400-e29b-41d4-a716-446655440004', 'Patrol-South', 'FAIL', DATEADD(HOUR, -8, SYSUTCDATETIME()), DATEADD(HOUR, -7, SYSUTCDATETIME()), 1),
-(1, 1, '550e8400-e29b-41d4-a716-446655440005', 'Inspection-Zone-C', 'FAIL', DATEADD(HOUR, -10, SYSUTCDATETIME()), DATEADD(MINUTE, -590, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440004', NULL, 'Patrol-South', 'FAIL', DATEADD(HOUR, -8, SYSUTCDATETIME()), DATEADD(HOUR, -7, SYSUTCDATETIME()), 1),
+(1, 1, '550e8400-e29b-41d4-a716-446655440005', NULL, 'Inspection-Zone-C', 'FAIL', DATEADD(HOUR, -10, SYSUTCDATETIME()), DATEADD(MINUTE, -590, SYSUTCDATETIME()), 1),
 
 -- Currently running mission
-(1, 1, '550e8400-e29b-41d4-a716-446655440006', 'Patrol-East', 'RUN', DATEADD(MINUTE, -15, SYSUTCDATETIME()), NULL, 0),
+(1, 1, '550e8400-e29b-41d4-a716-446655440006', NULL, 'Patrol-East', 'RUN', DATEADD(MINUTE, -15, SYSUTCDATETIME()), NULL, 0),
 
 -- Pending mission
-(1, 1, '550e8400-e29b-41d4-a716-446655440007', 'Inspection-Zone-D', 'PEND', SYSUTCDATETIME(), NULL, 0);
+(1, 1, '550e8400-e29b-41d4-a716-446655440007', NULL, 'Inspection-Zone-D', 'PEND', SYSUTCDATETIME(), NULL, 0);
 
 -- Sample Notification History (for audit trail testing)
 -- Note: Recipients field stores actual recipients from RoboticsNotificationRecipients at send time
@@ -2606,9 +2606,9 @@ def send_test_event(event_type, run_uuid=None, mission_name="Test Mission", robo
         run_uuid = "test-" + str(uuid.uuid4())[:8]
 
     status_map = {
-        "run.started": "started",
-        "run.completed": "completed",
-        "run.failed": "failed"
+        "run.started": "RUNNING", # placeholder - capture real data
+        "run.completed": "SUCCESS", # real data
+        "run.failed": "FAILURE" # real data
     }
 
     payload = {

@@ -1,0 +1,596 @@
+{
+  "generated_at": "2026-02-17T18:51:08.441218+00:00",
+  "summary": {
+    "openapi_version": "3.0.1",
+    "paths": 35,
+    "json_response_cases": 33,
+    "endpoints_with_known_values": 8,
+    "fields_with_known_values": 10,
+    "openapi_constrained_response_fields": 8,
+    "unconstrained_string_response_fields": 184
+  },
+  "source_tag_definitions": {
+    "openapi": "Value comes from OpenAPI enum/const in response schema.",
+    "sdk": "Value appears in official Orbit SDK examples as a known handled value set.",
+    "observed": "Value is explicitly checked in example response-processing logic (proxy for observed runtime values)."
+  },
+  "sdk_known_string_sets": {
+    "Run.missionStatus": {
+      "values": [
+        "SUCCESS",
+        "FAILURE",
+        "ERROR",
+        "STOPPED",
+        "UNKNOWN",
+        "RUNNING",
+        "PAUSED",
+        "NONE"
+      ],
+      "source": "python/examples/orbit/runs_response/runs_response.py"
+    },
+    "Run.missionStatus.terminal": {
+      "values": [
+        "SUCCESS",
+        "FAILURE",
+        "ERROR",
+        "STOPPED",
+        "NONE",
+        "UNKNOWN"
+      ],
+      "source": "python/examples/orbit/export_run_archives/export_run_archives.py"
+    },
+    "BackupTask.status.terminal": {
+      "values": [
+        "Completed",
+        "Cancelled"
+      ],
+      "source": "python/examples/orbit/backups/get_backup.py"
+    },
+    "Anomaly.status": {
+      "values": [
+        "open",
+        "closed"
+      ],
+      "source": "python/examples/orbit/anomalies/patch_anomalies.py"
+    },
+    "WebhookPayload.type (non-OpenAPI payload)": {
+      "values": [
+        "ACTION_COMPLETED",
+        "ACTION_COMPLETED_WITH_ALERT",
+        "TEST"
+      ],
+      "source": "python/examples/orbit/webhook/hello_webhook.py"
+    }
+  },
+  "endpoint_field_values": {
+    "GET /anomalies 200": {
+      "resources[].status": {
+        "possible_values": [
+          {
+            "value": "closed",
+            "sources": [
+              "openapi",
+              "sdk"
+            ]
+          },
+          {
+            "value": "open",
+            "sources": [
+              "openapi",
+              "sdk"
+            ]
+          }
+        ]
+      }
+    },
+    "GET /backup_tasks 200": {
+      "[].status": {
+        "possible_values": [
+          {
+            "value": "Cancelled",
+            "sources": [
+              "openapi",
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "Completed",
+            "sources": [
+              "openapi",
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "Creating database dump",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Creating zip file",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Error",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Starting",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    },
+    "GET /run_events/ 200": {
+      "resources[].eventType": {
+        "possible_values": [
+          {
+            "value": "daq",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "screenshot",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    },
+    "GET /run_events/{runEventUuid} 200": {
+      "eventType": {
+        "possible_values": [
+          {
+            "value": "daq",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "screenshot",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    },
+    "GET /runs/ 200": {
+      "resources[].missionStatus": {
+        "possible_values": [
+          {
+            "value": "ERROR",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "FAILURE",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "NONE",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "PAUSED",
+            "sources": [
+              "sdk"
+            ]
+          },
+          {
+            "value": "RUNNING",
+            "sources": [
+              "sdk"
+            ]
+          },
+          {
+            "value": "STOPPED",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "SUCCESS",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "UNKNOWN",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          }
+        ],
+        "unconstrained_string": true
+      },
+      "resources[].runType": {
+        "possible_values": [
+          {
+            "value": "mission",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "teleop",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    },
+    "GET /runs/{runUuid} 200": {
+      "missionStatus": {
+        "possible_values": [
+          {
+            "value": "ERROR",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "FAILURE",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "NONE",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "PAUSED",
+            "sources": [
+              "sdk"
+            ]
+          },
+          {
+            "value": "RUNNING",
+            "sources": [
+              "sdk"
+            ]
+          },
+          {
+            "value": "STOPPED",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "SUCCESS",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "UNKNOWN",
+            "sources": [
+              "sdk",
+              "observed"
+            ]
+          }
+        ],
+        "unconstrained_string": true
+      },
+      "runType": {
+        "possible_values": [
+          {
+            "value": "mission",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "teleop",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    },
+    "PATCH /anomalies/{anomalyId} 200": {
+      "status": {
+        "possible_values": [
+          {
+            "value": "closed",
+            "sources": [
+              "openapi",
+              "sdk"
+            ]
+          },
+          {
+            "value": "open",
+            "sources": [
+              "openapi",
+              "sdk"
+            ]
+          }
+        ]
+      }
+    },
+    "POST /backup_tasks 200": {
+      "data.status": {
+        "possible_values": [
+          {
+            "value": "Cancelled",
+            "sources": [
+              "openapi",
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "Completed",
+            "sources": [
+              "openapi",
+              "sdk",
+              "observed"
+            ]
+          },
+          {
+            "value": "Creating database dump",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Creating zip file",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Error",
+            "sources": [
+              "openapi"
+            ]
+          },
+          {
+            "value": "Starting",
+            "sources": [
+              "openapi"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "unconstrained_string_highlights": [
+    {
+      "endpoint": "GET /runs/ 200",
+      "field_path": "resources[].missionStatus",
+      "known_values": [
+        {
+          "value": "ERROR",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "FAILURE",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "NONE",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "PAUSED",
+          "sources": [
+            "sdk"
+          ]
+        },
+        {
+          "value": "RUNNING",
+          "sources": [
+            "sdk"
+          ]
+        },
+        {
+          "value": "STOPPED",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "SUCCESS",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "UNKNOWN",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        }
+      ],
+      "suggested_live_collection": {
+        "priority": "high",
+        "reason": "missionStatus is string-typed in OpenAPI (no enum/const).",
+        "target": "Scan recent pages from GET /runs/ and sample GET /runs/{runUuid} for details.",
+        "collector": "python/examples/orbit/runs_response/collect_response_variations.py"
+      }
+    },
+    {
+      "endpoint": "GET /runs/{runUuid} 200",
+      "field_path": "missionStatus",
+      "known_values": [
+        {
+          "value": "ERROR",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "FAILURE",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "NONE",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "PAUSED",
+          "sources": [
+            "sdk"
+          ]
+        },
+        {
+          "value": "RUNNING",
+          "sources": [
+            "sdk"
+          ]
+        },
+        {
+          "value": "STOPPED",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "SUCCESS",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "UNKNOWN",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        }
+      ],
+      "suggested_live_collection": {
+        "priority": "high",
+        "reason": "Detail run response contains missionStatus as unconstrained string.",
+        "target": "Sample run UUIDs from GET /runs/ then fetch GET /runs/{runUuid}.",
+        "collector": "python/examples/orbit/runs_response/collect_response_variations.py"
+      }
+    },
+    {
+      "endpoint": "GET /run_statistics/sessions 200",
+      "field_path": "[].status",
+      "known_values": [],
+      "suggested_live_collection": {
+        "priority": "high",
+        "reason": "Session status field appears categorical but is unconstrained.",
+        "target": "Poll GET /run_statistics/sessions over varied mission outcomes and durations.",
+        "collector": "Extend python/examples/orbit/runs_response/collect_response_variations.py list_specs with run_statistics/sessions."
+      }
+    },
+    {
+      "endpoint": "GET /runs/{runUuid}/log 200",
+      "field_path": "[].event",
+      "known_values": [],
+      "suggested_live_collection": {
+        "priority": "medium",
+        "reason": "Run log event strings are unconstrained and likely carry event taxonomy.",
+        "target": "Collect GET /runs/{runUuid}/log across diverse runs and aggregate unique event names.",
+        "collector": "Add per-run log fetch in python/examples/orbit/runs_response/collect_response_variations.py."
+      }
+    },
+    {
+      "endpoint": "GET /backup_tasks 200",
+      "field_path": "[].error",
+      "known_values": [],
+      "suggested_live_collection": {
+        "priority": "medium",
+        "reason": "Error strings are unconstrained and useful for troubleshooting dictionaries.",
+        "target": "Track GET /backup_tasks during successful and failing backups.",
+        "collector": "Use python/examples/orbit/backups/get_backup.py and log response[\"error\"]."
+      }
+    },
+    {
+      "endpoint": "POST /backup_tasks 200",
+      "field_path": "data.error",
+      "known_values": [],
+      "suggested_live_collection": {
+        "priority": "medium",
+        "reason": "Initial backup task creation can include unconstrained error text.",
+        "target": "Capture POST /backup_tasks responses under invalid and valid backup options.",
+        "collector": "Use python/examples/orbit/backups/get_backup.py and persist post response payloads."
+      }
+    }
+  ],
+  "non_openapi_payload_value_sets": {
+    "WEBHOOK incoming payload": {
+      "field_path": "type",
+      "possible_values": [
+        {
+          "value": "ACTION_COMPLETED",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "ACTION_COMPLETED_WITH_ALERT",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        },
+        {
+          "value": "TEST",
+          "sources": [
+            "sdk",
+            "observed"
+          ]
+        }
+      ],
+      "notes": "Webhook listener payloads in examples are not represented in docs/orbit OpenAPI response schemas."
+    }
+  }
+}
